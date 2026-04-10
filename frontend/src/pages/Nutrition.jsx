@@ -1,0 +1,756 @@
+import React, { useState, useEffect } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Utensils, ChevronLeft, ChevronRight, RefreshCw, Settings, Droplets, Flame, Loader2, Leaf, Fish, Beef, Apple, Wheat, AlertTriangle, CheckCircle, ShoppingCart, Upload, Download, Github, X } from 'lucide-react'
+import { api } from '../api'
+import { format, parseISO, startOfWeek } from 'date-fns'
+import { fr } from 'date-fns/locale'
+
+const DAY_FR = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
+
+function CalorieBar({ value, target, label, color }) {
+  const pct = Math.min(100, Math.round((value / target) * 100))
+  return (
+    <div>
+      <div className="flex justify-between text-xs mb-0.5">
+        <span className="text-gray-400">{label}</span>
+        <span style={{ color }}>{value} / {target} kcal</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-dark-600">
+        <div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: color }} />
+      </div>
+    </div>
+  )
+}
+
+function MacroBadge({ label, value, unit = 'g', color }) {
+  return (
+    <div className="text-center p-2 rounded-lg bg-dark-700">
+      <p className="text-lg font-bold" style={{ color }}>~{value}</p>
+      <p className="text-xs text-gray-400">{unit} {label}</p>
+    </div>
+  )
+}
+
+function IngredientRow({ ingredient }) {
+  return (
+    <div className="flex justify-between items-start text-xs py-1 border-b border-dark-600/30 last:border-0">
+      <span className="text-gray-200">{ingredient.nom}</span>
+      <div className="text-right shrink-0 ml-4">
+        <span className="text-gray-400">{ingredient.quantite}</span>
+        {ingredient.kcal_approx && <span className="text-gray-500 ml-2">~{ingredient.kcal_approx} kcal</span>}
+      </div>
+    </div>
+  )
+}
+
+function MealCard({ title, icon: Icon, color, kcal, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="card">
+      <button onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 rounded-lg" style={{ backgroundColor: color + '20' }}>
+            <Icon size={16} style={{ color }} />
+          </div>
+          <span className="font-medium text-sm">{title}</span>
+        </div>
+        <div className="flex items-center gap-3">
+          {kcal && <span className="text-xs text-gray-400">~{kcal} kcal</span>}
+          <ChevronRight size={14} className={`text-gray-500 transition-transform ${open ? 'rotate-90' : ''}`} />
+        </div>
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden">
+            <div className="pt-3 mt-3 border-t border-dark-600">
+              {children}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function SettingsPanel({ onClose, onSaved }) {
+  const [tab, setTab] = useState('profil')
+  const [form, setForm] = useState({ weight_kg: 70, height_cm: 175, age: 35, sex: 'M', birthdate: '' })
+  const [gist, setGist] = useState({ gist_token: '', gist_id: '', gist_source_url: '', gist_last_push: null, gist_last_pull: null })
+  const [saving, setSaving] = useState(false)
+  const [savingGist, setSavingGist] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    Promise.all([
+      api.getNutritionSettings().catch(() => ({})),
+      api.getGistConfig().catch(() => ({})),
+    ]).then(([s, g]) => {
+      setForm(f => ({ ...f, ...s }))
+      setGist(g => ({ ...g, ...g }))
+      // fix: use direct assignment
+      if (s) setForm(s)
+      if (g) setGist(gv => ({ ...gv, ...g }))
+      setLoaded(true)
+    })
+  }, [])
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const setG = (k, v) => setGist(f => ({ ...f, [k]: v }))
+
+  const handleSaveProfil = async () => {
+    setSaving(true)
+    try { await api.saveNutritionSettings(form); onSaved() }
+    finally { setSaving(false) }
+  }
+
+  const handleSaveGist = async () => {
+    setSavingGist(true)
+    try { await api.saveGistConfig({ gist_token: gist.gist_token, gist_id: gist.gist_id, gist_source_url: gist.gist_source_url }) }
+    finally { setSavingGist(false) }
+  }
+
+  if (!loaded) return null
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+      <div className="bg-dark-800 border border-dark-500 rounded-xl w-full max-w-sm p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold">Paramètres</h3>
+          <button onClick={onClose} className="p-1 hover:bg-dark-600 rounded"><X size={16} /></button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 bg-dark-700 rounded-lg p-0.5">
+          {[['profil', 'Profil'], ['partage', 'Partage Gist']].map(([k, label]) => (
+            <button key={k} onClick={() => setTab(k)}
+              className={`flex-1 text-xs py-1.5 rounded-md transition-colors ${tab === k ? 'bg-dark-500 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'profil' && (
+          <>
+            <p className="text-xs text-gray-400">Données pour estimer tes besoins caloriques.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="text-xs text-gray-400 mb-1 block">Poids (kg)</label>
+                <input type="number" className="input-field" value={form.weight_kg} onChange={e => set('weight_kg', parseFloat(e.target.value))} /></div>
+              <div><label className="text-xs text-gray-400 mb-1 block">Taille (cm)</label>
+                <input type="number" className="input-field" value={form.height_cm} onChange={e => set('height_cm', parseFloat(e.target.value))} /></div>
+              <div><label className="text-xs text-gray-400 mb-1 block">Date de naissance</label>
+                <input type="date" className="input-field" value={form.birthdate || ''} onChange={e => set('birthdate', e.target.value)} />
+                {form.birthdate && <p className="text-xs text-gray-500 mt-0.5">{(() => { const b = new Date(form.birthdate); const a = new Date(); let age = a.getFullYear() - b.getFullYear(); if (a.getMonth() < b.getMonth() || (a.getMonth() === b.getMonth() && a.getDate() < b.getDate())) age--; return age + ' ans'; })()}</p>}
+              </div>
+              <div><label className="text-xs text-gray-400 mb-1 block">Sexe</label>
+                <select className="input-field" value={form.sex} onChange={e => set('sex', e.target.value)}>
+                  <option value="M">Homme</option>
+                  <option value="F">Femme</option>
+                </select></div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={onClose} className="btn-secondary flex-1">Annuler</button>
+              <button onClick={handleSaveProfil} disabled={saving} className="btn-primary flex-1 flex items-center justify-center gap-1">
+                {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+                Sauvegarder
+              </button>
+            </div>
+          </>
+        )}
+
+        {tab === 'partage' && (
+          <div className="space-y-3">
+            <p className="text-xs text-gray-400">Synchronise les menus entre deux instances de l'app via GitHub Gist.</p>
+
+            <div className="p-3 rounded-lg bg-dark-700/50 border border-dark-600 text-xs space-y-1">
+              <p className="font-medium text-gray-300">Ton rôle :</p>
+              <p className="text-gray-400">• <span className="text-white">Publier</span> → renseigne ton token GitHub et pousse tes menus</p>
+              <p className="text-gray-400">• <span className="text-white">Recevoir</span> → colle l'URL Gist de l'autre personne</p>
+            </div>
+
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Token GitHub (pour publier)</label>
+              <input type="password" className="input-field text-xs" placeholder="ghp_xxxxxxxxxxxx"
+                value={gist.gist_token || ''} onChange={e => setG('gist_token', e.target.value)} />
+              <p className="text-xs text-gray-500 mt-0.5">github.com → Settings → Developer settings → Personal access tokens → scope: gist</p>
+            </div>
+
+            {gist.gist_id && (
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Ton Gist ID (généré auto)</label>
+                <div className="flex gap-2">
+                  <input type="text" className="input-field text-xs flex-1 font-mono" readOnly value={gist.gist_id} />
+                  <button onClick={() => navigator.clipboard?.writeText(`https://gist.github.com/${gist.gist_id}`)}
+                    className="px-2 py-1.5 text-xs rounded-lg bg-dark-600 hover:bg-dark-500 text-gray-300">
+                    Copier URL
+                  </button>
+                </div>
+                {gist.gist_last_push && <p className="text-xs text-gray-500 mt-0.5">Dernier push : {new Date(gist.gist_last_push).toLocaleString('fr-BE')}</p>}
+              </div>
+            )}
+
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">URL Gist à recevoir (pour tirer les recettes)</label>
+              <input type="text" className="input-field text-xs" placeholder="https://gist.github.com/user/abc123 ou juste l'ID"
+                value={gist.gist_source_url || ''} onChange={e => setG('gist_source_url', e.target.value)} />
+              {gist.gist_last_pull && <p className="text-xs text-gray-500 mt-0.5">Dernier pull : {new Date(gist.gist_last_pull).toLocaleString('fr-BE')}</p>}
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={onClose} className="btn-secondary flex-1">Fermer</button>
+              <button onClick={handleSaveGist} disabled={savingGist} className="btn-primary flex-1 flex items-center justify-center gap-1">
+                {savingGist ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+                Enregistrer
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  )
+}
+
+function ShoppingList({ weekStart }) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [checked, setChecked] = useState({})
+  const [pulling, setPulling] = useState(false)
+  const [pullStatus, setPullStatus] = useState(null)
+
+  const load = () => {
+    setLoading(true)
+    api.getShoppingList(weekStart).then(d => { setData(d); setLoading(false) }).catch(() => setLoading(false))
+  }
+
+  useEffect(() => { load() }, [weekStart])
+
+  const toggle = (key) => setChecked(c => ({ ...c, [key]: !c[key] }))
+  const uncheckAll = () => setChecked({})
+
+  const handlePull = async () => {
+    setPulling(true)
+    setPullStatus(null)
+    try {
+      const r = await api.pullGist()
+      setPullStatus(`✓ ${r.imported} menus importés depuis le Gist`)
+      setTimeout(() => { load(); setPullStatus(null) }, 2000)
+    } catch (e) {
+      setPullStatus('Erreur : ' + e.message)
+    } finally {
+      setPulling(false)
+    }
+  }
+
+  if (loading) return <div className="card flex items-center justify-center py-10 gap-3 text-gray-400"><Loader2 size={18} className="animate-spin" /><span className="text-sm">Chargement…</span></div>
+
+  if (!data?.items?.length) return (
+    <div className="card text-center py-10 space-y-3">
+      <ShoppingCart size={32} className="text-gray-600 mx-auto" />
+      <p className="text-sm text-gray-400">Génère d'abord les menus de la semaine</p>
+      <p className="text-xs text-gray-500">La liste de courses s'alimente automatiquement depuis les menus générés.</p>
+    </div>
+  )
+
+  const uncheckedItems = data.items.filter(it => !checked[it.nom.toLowerCase()])
+  const checkedItems = data.items.filter(it => checked[it.nom.toLowerCase()])
+
+  return (
+    <div className="space-y-3">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-gray-400">{data.days_with_menu}/{data.total_days} jours · {data.items.length} ingrédients</p>
+        <div className="flex gap-2">
+          <button onClick={handlePull} disabled={pulling}
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 transition-colors disabled:opacity-50 text-gray-300"
+            title="Tirer les recettes depuis le Gist partenaire">
+            {pulling ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+            <span className="hidden sm:inline">Tirer Gist</span>
+          </button>
+          {Object.keys(checked).length > 0 && (
+            <button onClick={uncheckAll} className="text-xs px-2.5 py-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 transition-colors text-gray-400">
+              Tout décocher
+            </button>
+          )}
+        </div>
+      </div>
+
+      {pullStatus && (
+        <p className={`text-xs px-3 py-2 rounded-lg ${pullStatus.startsWith('✓') ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300'}`}>
+          {pullStatus}
+        </p>
+      )}
+
+      {/* Liste à cocher */}
+      <div className="card divide-y divide-dark-600">
+        {uncheckedItems.map(item => (
+          <button key={item.nom} onClick={() => toggle(item.nom.toLowerCase())}
+            className="w-full flex items-start gap-3 py-2.5 text-left hover:bg-dark-700/30 transition-colors">
+            <div className="w-4 h-4 mt-0.5 rounded border border-gray-500 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <span className="text-sm text-gray-200">{item.nom}</span>
+              <div className="flex flex-wrap gap-1 mt-0.5">
+                {item.occurrences.map((o, i) => (
+                  <span key={i} className="text-xs text-gray-500">{o.day} {o.meal} {o.quantite ? `· ${o.quantite}` : ''}</span>
+                )).slice(0, 3)}
+                {item.occurrences.length > 3 && <span className="text-xs text-gray-600">+{item.occurrences.length - 3}</span>}
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {/* Articles cochés */}
+      {checkedItems.length > 0 && (
+        <div className="card divide-y divide-dark-600 opacity-50">
+          {checkedItems.map(item => (
+            <button key={item.nom} onClick={() => toggle(item.nom.toLowerCase())}
+              className="w-full flex items-center gap-3 py-2.5 text-left hover:bg-dark-700/30 transition-colors">
+              <div className="w-4 h-4 rounded border border-brand-green bg-brand-green/20 shrink-0 flex items-center justify-center">
+                <CheckCircle size={10} className="text-brand-green" />
+              </div>
+              <span className="text-sm text-gray-400 line-through">{item.nom}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <p className="text-xs text-gray-600 text-center">
+        {checkedItems.length} / {data.items.length} articles cochés — liste non sauvegardée
+      </p>
+    </div>
+  )
+}
+
+export default function Nutrition() {
+  const [view, setView] = useState('menus') // 'menus' | 'courses'
+  const [selectedDate, setSelectedDate] = useState(() => format(new Date(), 'yyyy-MM-dd'))
+  const [weekStart, setWeekStart] = useState(() => format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd'))
+  const [weekData, setWeekData] = useState(null)
+  const [dayData, setDayData] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [generating, setGenerating] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [error, setError] = useState(null)
+  const [generatingWeek, setGeneratingWeek] = useState(false)
+  const [weekGenStatus, setWeekGenStatus] = useState(null)
+  const [pushing, setPushing] = useState(false)
+  const [pushStatus, setPushStatus] = useState(null)
+
+  const loadWeek = (from) => {
+    api.getNutritionWeek(from).then(setWeekData).catch(() => {})
+  }
+
+  const loadDay = async (date, regen = false) => {
+    setLoading(true)
+    setError(null)
+    setDayData(null)
+    try {
+      const data = await api.getDailyMenu(date, regen)
+      setDayData(data)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const generateMenu = async () => {
+    setGenerating(true)
+    setError(null)
+    try {
+      const data = await api.getDailyMenu(selectedDate, true)
+      setDayData(data)
+      loadWeek(weekStart) // refresh semaine
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  const handleGenerateWeek = async () => {
+    setGeneratingWeek(true)
+    setWeekGenStatus(null)
+    try {
+      const result = await api.generateWeekMenus(weekStart)
+      setWeekGenStatus(`Génération lancée pour ${result.dates?.[0]} → ${result.dates?.[6]}`)
+      setTimeout(() => { loadWeek(weekStart); setWeekGenStatus(null) }, 3000)
+    } catch (e) {
+      setWeekGenStatus('Erreur : ' + e.message)
+    } finally {
+      setGeneratingWeek(false)
+    }
+  }
+
+  const handlePushGist = async () => {
+    setPushing(true)
+    setPushStatus(null)
+    try {
+      const r = await api.pushGist(weekStart)
+      setPushStatus(`✓ ${r.days} menus poussés`)
+      setTimeout(() => setPushStatus(null), 4000)
+    } catch (e) {
+      setPushStatus('Erreur : ' + e.message)
+    } finally {
+      setPushing(false)
+    }
+  }
+
+  useEffect(() => { loadWeek(weekStart) }, [weekStart])
+  useEffect(() => { loadDay(selectedDate) }, [selectedDate])
+
+  const prevWeek = () => {
+    const d = new Date(weekStart + 'T12:00:00'); d.setDate(d.getDate() - 7)
+    setWeekStart(format(d, 'yyyy-MM-dd'))
+  }
+  const nextWeek = () => {
+    const d = new Date(weekStart + 'T12:00:00'); d.setDate(d.getDate() + 7)
+    setWeekStart(format(d, 'yyyy-MM-dd'))
+  }
+
+  const menu = dayData?.menu
+  const needs = dayData?.needs
+
+  const SESSION_COLORS = { 'Repos': '#6B7280', 'Endurance': '#378ADD', 'Longue': '#1D9E75', 'Tempo': '#E24B4A', 'Récup': '#7F77DD' }
+  const getSessionColor = (s) => Object.entries(SESSION_COLORS).find(([k]) => s?.includes(k))?.[1] || '#EF9F27'
+
+  return (
+    <div className="space-y-4 pb-20 md:pb-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-bold">Nutrition</h1>
+          <p className="text-xs text-gray-400">Menus adaptés à ta charge d'entraînement</p>
+        </div>
+        <div className="flex gap-1">
+          <button
+            onClick={handleGenerateWeek}
+            disabled={generatingWeek}
+            title="Générer tous les menus de la semaine"
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 transition-colors disabled:opacity-50 text-gray-300"
+          >
+            {generatingWeek ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+            <span className="hidden sm:inline">Semaine</span>
+          </button>
+          <button
+            onClick={handlePushGist}
+            disabled={pushing}
+            title="Pousser les menus vers GitHub Gist"
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 transition-colors disabled:opacity-50 text-gray-300"
+          >
+            {pushing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+            <span className="hidden sm:inline">Gist</span>
+          </button>
+          <button onClick={() => setShowSettings(true)} className="p-2 rounded-lg hover:bg-dark-700 text-gray-400 hover:text-white transition-colors">
+            <Settings size={18} />
+          </button>
+        </div>
+      </div>
+
+      {/* Status push Gist */}
+      {pushStatus && (
+        <div className={`text-xs px-3 py-2 rounded-lg flex items-center gap-2 ${pushStatus.startsWith('✓') ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300'}`}>
+          <Github size={12} />{pushStatus}
+          {!pushStatus.startsWith('✓') && <span className="text-gray-400 ml-1">— Configure le token dans Paramètres → Partage Gist</span>}
+        </div>
+      )}
+
+      {/* Onglets Menus / Courses */}
+      <div className="flex gap-1 bg-dark-800 rounded-lg p-0.5 border border-dark-600">
+        <button onClick={() => setView('menus')}
+          className={`flex-1 flex items-center justify-center gap-1.5 text-xs py-2 rounded-md transition-colors ${view === 'menus' ? 'bg-dark-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+          <Utensils size={13} /> Menus
+        </button>
+        <button onClick={() => setView('courses')}
+          className={`flex-1 flex items-center justify-center gap-1.5 text-xs py-2 rounded-md transition-colors ${view === 'courses' ? 'bg-dark-600 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+          <ShoppingCart size={13} /> Liste de courses
+        </button>
+      </div>
+
+      {/* Vue Liste de courses */}
+      {view === 'courses' && (
+        <div className="space-y-3">
+          {/* Navigation semaine */}
+          <div className="flex items-center justify-between">
+            <button onClick={prevWeek} className="p-1.5 rounded hover:bg-dark-700"><ChevronLeft size={16} /></button>
+            <span className="text-sm font-medium">Semaine du {format(parseISO(weekStart), 'd MMM', { locale: fr })}</span>
+            <button onClick={nextWeek} className="p-1.5 rounded hover:bg-dark-700"><ChevronRight size={16} /></button>
+          </div>
+          <ShoppingList weekStart={weekStart} />
+        </div>
+      )}
+
+      {/* Vue Menus */}
+      {view === 'menus' && <>
+
+      {/* Calendrier semaine */}
+      <div className="card">
+        <div className="flex items-center justify-between mb-3">
+          <button onClick={prevWeek} className="p-1 rounded hover:bg-dark-600"><ChevronLeft size={16} /></button>
+          <div className="flex flex-col items-center gap-0.5">
+            <span className="text-xs font-medium text-gray-300">
+              Semaine du {format(parseISO(weekStart), 'd MMM', { locale: fr })}
+            </span>
+            {weekGenStatus && <span className="text-xs text-brand-green">{weekGenStatus}</span>}
+          </div>
+          <button onClick={nextWeek} className="p-1 rounded hover:bg-dark-600"><ChevronRight size={16} /></button>
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {weekData?.days?.map((day, i) => {
+            const isSelected = day.date === selectedDate
+            const isToday = day.date === format(new Date(), 'yyyy-MM-dd')
+            const d = parseISO(day.date)
+            return (
+              <button key={day.date} onClick={() => setSelectedDate(day.date)}
+                className={`flex flex-col items-center p-1.5 rounded-lg transition-all ${isSelected ? 'bg-brand-green text-white' : 'hover:bg-dark-600 text-gray-400'}`}>
+                <span className="text-xs">{DAY_FR[i]}</span>
+                <span className={`text-sm font-bold ${isToday && !isSelected ? 'text-brand-green' : ''}`}>{d.getDate()}</span>
+                {/* Indicateur charge */}
+                <div className="mt-0.5 flex flex-col gap-0.5 w-full">
+                  {day.session_kcal > 0 && (
+                    <div className="h-1 rounded-full w-full" style={{
+                      backgroundColor: day.session_kcal > 1200 ? '#E24B4A' : day.session_kcal > 600 ? '#EF9F27' : '#1D9E75'
+                    }} />
+                  )}
+                  {day.has_menu && (
+                    <div className="h-0.5 rounded-full w-full bg-brand-green/40" />
+                  )}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+        <div className="mt-2 flex gap-3 text-xs text-gray-500">
+          <span className="flex items-center gap-1"><span className="w-2 h-1 rounded bg-red-400 inline-block" />Intense</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-1 rounded bg-orange-400 inline-block" />Modéré</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-1 rounded bg-brand-green inline-block" />Léger/Repos</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-0.5 rounded bg-brand-green/40 inline-block" />Menu généré</span>
+        </div>
+      </div>
+
+      {/* Jour sélectionné */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-semibold">
+            {format(parseISO(selectedDate), 'EEEE d MMMM', { locale: fr })}
+          </h2>
+          {dayData?.session_summary && (
+            <p className="text-xs" style={{ color: getSessionColor(dayData.session_summary) }}>
+              {dayData.session_summary}
+            </p>
+          )}
+        </div>
+        <button
+          onClick={generateMenu}
+          disabled={generating}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 transition-colors disabled:opacity-50"
+        >
+          {generating ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+          {menu ? 'Régénérer' : 'Générer le menu'}
+        </button>
+      </div>
+
+      {/* Erreur */}
+      {error && (
+        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 flex gap-2 text-xs text-red-300">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          {error}
+        </div>
+      )}
+
+      {/* Loading */}
+      {(loading || generating) && !menu && (
+        <div className="card flex items-center justify-center gap-3 py-10 text-gray-400">
+          <Loader2 size={20} className="animate-spin" />
+          <span className="text-sm">{generating ? 'Génération du menu en cours…' : 'Chargement…'}</span>
+        </div>
+      )}
+
+      {/* Résumé calorique */}
+      {needs && (
+        <div className="card space-y-3">
+          <div className="flex items-center gap-2 mb-1">
+            <Flame size={16} className="text-brand-orange" />
+            <h3 className="text-sm font-semibold">Besoins estimés</h3>
+            <span className="text-xs text-gray-500 ml-auto">indicatif</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="text-center p-2 rounded-lg bg-dark-700">
+              <p className="text-lg font-bold text-brand-green">~{needs.total_kcal}</p>
+              <p className="text-xs text-gray-400">kcal total</p>
+            </div>
+            <div className="text-center p-2 rounded-lg bg-dark-700">
+              <p className="text-lg font-bold text-brand-blue">~{needs.session_kcal}</p>
+              <p className="text-xs text-gray-400">kcal séance</p>
+            </div>
+            <div className="text-center p-2 rounded-lg bg-dark-700">
+              <p className="text-lg font-bold text-brand-purple">{needs.hydration_l}L</p>
+              <p className="text-xs text-gray-400">hydratation</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <MacroBadge label="glucides" value={needs.macros.carbs_g} color="#1D9E75" />
+            <MacroBadge label="protéines" value={needs.macros.protein_g} color="#378ADD" />
+            <MacroBadge label="lipides" value={needs.macros.fat_g} color="#EF9F27" />
+          </div>
+        </div>
+      )}
+
+      {/* Menu du jour */}
+      {menu && (
+        <AnimatePresence>
+          <motion.div key={selectedDate} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+            className="space-y-3">
+
+            {/* Message coach */}
+            {menu.message_coach && (
+              <div className="p-3 rounded-lg bg-dark-700/50 border border-dark-500">
+                <p className="text-xs text-gray-300 italic">{menu.titre_journee && <span className="font-semibold not-italic text-white">{menu.titre_journee} — </span>}{menu.message_coach}</p>
+              </div>
+            )}
+
+            {/* Petit-déjeuner */}
+            {menu.petit_dejeuner && (
+              <MealCard title="Petit-déjeuner" icon={Wheat} color="#EF9F27" kcal={menu.petit_dejeuner.kcal_total} defaultOpen={true}>
+                <div className="space-y-1">
+                  {menu.petit_dejeuner.ingredients?.map((ing, i) => <IngredientRow key={i} ingredient={ing} />)}
+                </div>
+                {menu.petit_dejeuner.note && (
+                  <p className="text-xs text-gray-400 mt-2 italic">{menu.petit_dejeuner.note}</p>
+                )}
+              </MealCard>
+            )}
+
+            {/* Déjeuner */}
+            {menu.dejeuner && (
+              <MealCard title="Déjeuner" icon={Leaf} color="#1D9E75" kcal={menu.dejeuner.kcal_total}>
+                {menu.dejeuner.option_restes && (
+                  <div className="mb-2">
+                    <p className="text-xs font-medium text-brand-green mb-1">Option A — Restes</p>
+                    <p className="text-xs text-gray-300">{menu.dejeuner.option_restes}</p>
+                  </div>
+                )}
+                {menu.dejeuner.option_pain_fromage && (
+                  <div className="mt-2 pt-2 border-t border-dark-600">
+                    <p className="text-xs font-medium text-gray-400 mb-1">Option B — Pain + fromage</p>
+                    <p className="text-xs text-gray-300 mb-1">{menu.dejeuner.option_pain_fromage.description}</p>
+                    {menu.dejeuner.option_pain_fromage.ingredients?.map((ing, i) => <IngredientRow key={i} ingredient={ing} />)}
+                  </div>
+                )}
+                {menu.dejeuner.note && (
+                  <p className="text-xs text-gray-400 mt-2 italic">{menu.dejeuner.note}</p>
+                )}
+              </MealCard>
+            )}
+
+            {/* Collation */}
+            {menu.collation?.si_besoin && (
+              <MealCard title="Collation (si besoin)" icon={Apple} color="#7F77DD" kcal={menu.collation.kcal_approx}>
+                <p className="text-sm text-gray-300">{menu.collation.si_besoin}</p>
+              </MealCard>
+            )}
+
+            {/* Dîner */}
+            {menu.diner && (
+              <MealCard title={`Dîner — ${menu.diner.nom || ''}`} icon={menu.diner.nom?.toLowerCase().includes('truite') || menu.diner.nom?.toLowerCase().includes('saumon') ? Fish : Beef} color="#378ADD" kcal={menu.diner.kcal_total} defaultOpen={true}>
+                {menu.diner.temps_preparation && (
+                  <p className="text-xs text-gray-500 mb-2">⏱ {menu.diner.temps_preparation}</p>
+                )}
+                <div className="space-y-1 mb-3">
+                  {menu.diner.ingredients?.map((ing, i) => <IngredientRow key={i} ingredient={ing} />)}
+                </div>
+                {menu.diner.preparation?.length > 0 && (
+                  <div className="border-t border-dark-600 pt-2 space-y-1">
+                    <p className="text-xs font-medium text-gray-400 mb-1">Préparation</p>
+                    {menu.diner.preparation.map((step, i) => (
+                      <div key={i} className="flex gap-2 text-xs text-gray-300">
+                        <span className="text-brand-green shrink-0">{i + 1}.</span>{step}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {menu.diner.restes_lendemain && (
+                  <div className="mt-2 flex items-center gap-1.5 text-xs text-brand-green">
+                    <CheckCircle size={11} /> Fait de bonnes restes pour le déjeuner de demain
+                  </div>
+                )}
+                {menu.diner.note && (
+                  <p className="text-xs text-gray-400 mt-2 italic">{menu.diner.note}</p>
+                )}
+              </MealCard>
+            )}
+
+            {/* Hydratation */}
+            {menu.hydratation && (
+              <MealCard title="Hydratation" icon={Droplets} color="#378ADD">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-2xl font-bold text-brand-blue">~{menu.hydratation.total_l}L</span>
+                  <span className="text-xs text-gray-400">objectif journalier</span>
+                </div>
+                {menu.hydratation.conseils?.map((c, i) => (
+                  <p key={i} className="text-xs text-gray-300 flex gap-2"><span className="text-brand-blue">·</span>{c}</p>
+                ))}
+              </MealCard>
+            )}
+
+            {/* Récap calories */}
+            {menu.recap_kcal && (
+              <div className="card space-y-2">
+                <h4 className="text-xs font-medium text-gray-400">Récap calorique indicatif</h4>
+                <CalorieBar
+                  value={menu.recap_kcal.total}
+                  target={menu.recap_kcal.objectif}
+                  label="Total estimé vs besoin"
+                  color={Math.abs(menu.recap_kcal.total - menu.recap_kcal.objectif) < 200 ? '#1D9E75' : '#EF9F27'}
+                />
+                <div className="grid grid-cols-4 gap-1 text-xs text-center mt-1">
+                  {[
+                    ['Matin', menu.recap_kcal.petit_dejeuner],
+                    ['Midi', menu.recap_kcal.dejeuner],
+                    ['Collation', menu.recap_kcal.collation],
+                    ['Soir', menu.recap_kcal.diner],
+                  ].map(([label, kcal]) => kcal ? (
+                    <div key={label} className="p-1 rounded bg-dark-700">
+                      <p className="text-white font-medium">~{kcal}</p>
+                      <p className="text-gray-500">{label}</p>
+                    </div>
+                  ) : null)}
+                </div>
+                <p className="text-xs text-gray-500 italic">Ces valeurs sont des estimations — adapte selon ta faim et ton ressenti.</p>
+              </div>
+            )}
+
+            {/* Provider info */}
+            {dayData?.provider && (
+              <p className="text-xs text-gray-600 text-center">Généré via {dayData.provider}{dayData.cached ? ' · mis en cache' : ''}</p>
+            )}
+          </motion.div>
+        </AnimatePresence>
+      )}
+
+      {/* État vide — pas encore de menu */}
+      {!loading && !generating && !menu && !error && (
+        <div className="card text-center py-10 space-y-3">
+          <Utensils size={32} className="text-gray-600 mx-auto" />
+          <p className="text-sm text-gray-400">Pas encore de menu pour ce jour</p>
+          <button onClick={generateMenu} className="btn-primary mx-auto flex items-center gap-2">
+            <Utensils size={14} /> Générer le menu avec l'IA
+          </button>
+          <p className="text-xs text-gray-500">L'IA adapte le menu à ta séance et à la saison</p>
+        </div>
+      )}
+
+      </> /* fin view === 'menus' */}
+
+      {/* Panel paramètres */}
+      <AnimatePresence>
+        {showSettings && (
+          <SettingsPanel
+            onClose={() => setShowSettings(false)}
+            onSaved={() => { setShowSettings(false); loadDay(selectedDate, false) }}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}

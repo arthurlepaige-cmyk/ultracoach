@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-dark-900 text-gray-100 font-sans;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-dark-800;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-dark-500 rounded-full;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-dark-700 border border-dark-500/50 rounded-card p-4;
+  }
+
+  .card-sm {
+    @apply bg-dark-700 border border-dark-500/50 rounded-card p-3;
+  }
+
+  .metric-card {
+    @apply card flex flex-col gap-1;
+  }
+
+  .btn-primary {
+    @apply bg-brand-green hover:bg-brand-green/90 text-white font-semibold px-4 py-2 rounded-lg transition-colors;
+  }
+
+  .btn-secondary {
+    @apply bg-dark-600 hover:bg-dark-500 text-gray-200 font-medium px-4 py-2 rounded-lg transition-colors border border-dark-500;
+  }
+
+  .input-field {
+    @apply bg-dark-800 border border-dark-500 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-brand-green transition-colors w-full;
+  }
+
+  .nav-link {
+    @apply flex items-center gap-2 px-3 py-2 rounded-lg text-gray-400 hover:text-white hover:bg-dark-600 transition-colors text-sm font-medium;
+  }
+
+  .nav-link.active {
+    @apply text-white bg-dark-600;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-brand-green to-brand-blue bg-clip-text text-transparent;
+  }
+
+  .animate-pulse-slow {
+    animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+}
+
+/* Custom recharts tooltip */
+.recharts-tooltip-wrapper {
+  z-index: 100;
+}
