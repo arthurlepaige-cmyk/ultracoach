@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Utensils, ChevronLeft, ChevronRight, RefreshCw, Settings, Droplets, Flame, Loader2, Leaf, Fish, Beef, Apple, Wheat, AlertTriangle, CheckCircle, ShoppingCart, Upload, Download, Github, X } from 'lucide-react'
+import { Utensils, ChevronLeft, ChevronRight, RefreshCw, Settings, Droplets, Flame, Loader2, Leaf, Fish, Beef, Apple, Wheat, AlertTriangle, CheckCircle, ShoppingCart, Download, X } from 'lucide-react'
 import { api } from '../api'
 import { format, parseISO, startOfWeek } from 'date-fns'
 import { fr } from 'date-fns/locale'
@@ -74,40 +74,20 @@ function MealCard({ title, icon: Icon, color, kcal, children, defaultOpen = fals
 }
 
 function SettingsPanel({ onClose, onSaved }) {
-  const [tab, setTab] = useState('profil')
   const [form, setForm] = useState({ weight_kg: 70, height_cm: 175, age: 35, sex: 'M', birthdate: '' })
-  const [gist, setGist] = useState({ gist_token: '', gist_id: '', gist_source_url: '', gist_last_push: null, gist_last_pull: null })
   const [saving, setSaving] = useState(false)
-  const [savingGist, setSavingGist] = useState(false)
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    Promise.all([
-      api.getNutritionSettings().catch(() => ({})),
-      api.getGistConfig().catch(() => ({})),
-    ]).then(([s, g]) => {
-      setForm(f => ({ ...f, ...s }))
-      setGist(g => ({ ...g, ...g }))
-      // fix: use direct assignment
-      if (s) setForm(s)
-      if (g) setGist(gv => ({ ...gv, ...g }))
-      setLoaded(true)
-    })
+    api.getNutritionSettings().then(s => { if (s) setForm(s); setLoaded(true) }).catch(() => setLoaded(true))
   }, [])
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
-  const setG = (k, v) => setGist(f => ({ ...f, [k]: v }))
 
-  const handleSaveProfil = async () => {
+  const handleSave = async () => {
     setSaving(true)
     try { await api.saveNutritionSettings(form); onSaved() }
     finally { setSaving(false) }
-  }
-
-  const handleSaveGist = async () => {
-    setSavingGist(true)
-    try { await api.saveGistConfig({ gist_token: gist.gist_token, gist_id: gist.gist_id, gist_source_url: gist.gist_source_url }) }
-    finally { setSavingGist(false) }
   }
 
   if (!loaded) return null
@@ -116,95 +96,32 @@ function SettingsPanel({ onClose, onSaved }) {
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
       <div className="bg-dark-800 border border-dark-500 rounded-xl w-full max-w-sm p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="font-bold">Paramètres</h3>
+          <h3 className="font-bold">Paramètres nutrition</h3>
           <button onClick={onClose} className="p-1 hover:bg-dark-600 rounded"><X size={16} /></button>
         </div>
-
-        {/* Tabs */}
-        <div className="flex gap-1 bg-dark-700 rounded-lg p-0.5">
-          {[['profil', 'Profil'], ['partage', 'Partage Gist']].map(([k, label]) => (
-            <button key={k} onClick={() => setTab(k)}
-              className={`flex-1 text-xs py-1.5 rounded-md transition-colors ${tab === k ? 'bg-dark-500 text-white' : 'text-gray-400 hover:text-gray-200'}`}>
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {tab === 'profil' && (
-          <>
-            <p className="text-xs text-gray-400">Données pour estimer tes besoins caloriques.</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs text-gray-400 mb-1 block">Poids (kg)</label>
-                <input type="number" className="input-field" value={form.weight_kg} onChange={e => set('weight_kg', parseFloat(e.target.value))} /></div>
-              <div><label className="text-xs text-gray-400 mb-1 block">Taille (cm)</label>
-                <input type="number" className="input-field" value={form.height_cm} onChange={e => set('height_cm', parseFloat(e.target.value))} /></div>
-              <div><label className="text-xs text-gray-400 mb-1 block">Date de naissance</label>
-                <input type="date" className="input-field" value={form.birthdate || ''} onChange={e => set('birthdate', e.target.value)} />
-                {form.birthdate && <p className="text-xs text-gray-500 mt-0.5">{(() => { const b = new Date(form.birthdate); const a = new Date(); let age = a.getFullYear() - b.getFullYear(); if (a.getMonth() < b.getMonth() || (a.getMonth() === b.getMonth() && a.getDate() < b.getDate())) age--; return age + ' ans'; })()}</p>}
-              </div>
-              <div><label className="text-xs text-gray-400 mb-1 block">Sexe</label>
-                <select className="input-field" value={form.sex} onChange={e => set('sex', e.target.value)}>
-                  <option value="M">Homme</option>
-                  <option value="F">Femme</option>
-                </select></div>
-            </div>
-            <div className="flex gap-2 pt-1">
-              <button onClick={onClose} className="btn-secondary flex-1">Annuler</button>
-              <button onClick={handleSaveProfil} disabled={saving} className="btn-primary flex-1 flex items-center justify-center gap-1">
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
-                Sauvegarder
-              </button>
-            </div>
-          </>
-        )}
-
-        {tab === 'partage' && (
-          <div className="space-y-3">
-            <p className="text-xs text-gray-400">Synchronise les menus entre deux instances de l'app via GitHub Gist.</p>
-
-            <div className="p-3 rounded-lg bg-dark-700/50 border border-dark-600 text-xs space-y-1">
-              <p className="font-medium text-gray-300">Ton rôle :</p>
-              <p className="text-gray-400">• <span className="text-white">Publier</span> → renseigne ton token GitHub et pousse tes menus</p>
-              <p className="text-gray-400">• <span className="text-white">Recevoir</span> → colle l'URL Gist de l'autre personne</p>
-            </div>
-
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">Token GitHub (pour publier)</label>
-              <input type="password" className="input-field text-xs" placeholder="ghp_xxxxxxxxxxxx"
-                value={gist.gist_token || ''} onChange={e => setG('gist_token', e.target.value)} />
-              <p className="text-xs text-gray-500 mt-0.5">github.com → Settings → Developer settings → Personal access tokens → scope: gist</p>
-            </div>
-
-            {gist.gist_id && (
-              <div>
-                <label className="text-xs text-gray-400 mb-1 block">Ton Gist ID (généré auto)</label>
-                <div className="flex gap-2">
-                  <input type="text" className="input-field text-xs flex-1 font-mono" readOnly value={gist.gist_id} />
-                  <button onClick={() => navigator.clipboard?.writeText(`https://gist.github.com/${gist.gist_id}`)}
-                    className="px-2 py-1.5 text-xs rounded-lg bg-dark-600 hover:bg-dark-500 text-gray-300">
-                    Copier URL
-                  </button>
-                </div>
-                {gist.gist_last_push && <p className="text-xs text-gray-500 mt-0.5">Dernier push : {new Date(gist.gist_last_push).toLocaleString('fr-BE')}</p>}
-              </div>
-            )}
-
-            <div>
-              <label className="text-xs text-gray-400 mb-1 block">URL Gist à recevoir (pour tirer les recettes)</label>
-              <input type="text" className="input-field text-xs" placeholder="https://gist.github.com/user/abc123 ou juste l'ID"
-                value={gist.gist_source_url || ''} onChange={e => setG('gist_source_url', e.target.value)} />
-              {gist.gist_last_pull && <p className="text-xs text-gray-500 mt-0.5">Dernier pull : {new Date(gist.gist_last_pull).toLocaleString('fr-BE')}</p>}
-            </div>
-
-            <div className="flex gap-2 pt-1">
-              <button onClick={onClose} className="btn-secondary flex-1">Fermer</button>
-              <button onClick={handleSaveGist} disabled={savingGist} className="btn-primary flex-1 flex items-center justify-center gap-1">
-                {savingGist ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
-                Enregistrer
-              </button>
-            </div>
+        <p className="text-xs text-gray-400">Données pour estimer tes besoins caloriques.</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className="text-xs text-gray-400 mb-1 block">Poids (kg)</label>
+            <input type="number" className="input-field" value={form.weight_kg} onChange={e => set('weight_kg', parseFloat(e.target.value))} /></div>
+          <div><label className="text-xs text-gray-400 mb-1 block">Taille (cm)</label>
+            <input type="number" className="input-field" value={form.height_cm} onChange={e => set('height_cm', parseFloat(e.target.value))} /></div>
+          <div><label className="text-xs text-gray-400 mb-1 block">Date de naissance</label>
+            <input type="date" className="input-field" value={form.birthdate || ''} onChange={e => set('birthdate', e.target.value)} />
+            {form.birthdate && <p className="text-xs text-gray-500 mt-0.5">{(() => { const b = new Date(form.birthdate); const a = new Date(); let age = a.getFullYear() - b.getFullYear(); if (a.getMonth() < b.getMonth() || (a.getMonth() === b.getMonth() && a.getDate() < b.getDate())) age--; return age + ' ans'; })()}</p>}
           </div>
-        )}
+          <div><label className="text-xs text-gray-400 mb-1 block">Sexe</label>
+            <select className="input-field" value={form.sex} onChange={e => set('sex', e.target.value)}>
+              <option value="M">Homme</option>
+              <option value="F">Femme</option>
+            </select></div>
+        </div>
+        <div className="flex gap-2 pt-1">
+          <button onClick={onClose} className="btn-secondary flex-1">Annuler</button>
+          <button onClick={handleSave} disabled={saving} className="btn-primary flex-1 flex items-center justify-center gap-1">
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+            Sauvegarder
+          </button>
+        </div>
       </div>
     </motion.div>
   )
@@ -227,15 +144,20 @@ function ShoppingList({ weekStart }) {
   const toggle = (key) => setChecked(c => ({ ...c, [key]: !c[key] }))
   const uncheckAll = () => setChecked({})
 
-  const handlePull = async () => {
+  const handleSync = async () => {
     setPulling(true)
     setPullStatus(null)
     try {
-      const r = await api.pullGist()
-      setPullStatus(`✓ ${r.imported} menus importés depuis le Gist`)
-      setTimeout(() => { load(); setPullStatus(null) }, 2000)
+      const r = await api.syncFromSource(weekStart)
+      if (r.imported > 0) {
+        setPullStatus(`✓ ${r.imported} menus synchronisés`)
+        setTimeout(() => { load(); setPullStatus(null) }, 2000)
+      } else {
+        setPullStatus('Déjà à jour — aucun nouveau menu')
+        setTimeout(() => setPullStatus(null), 3000)
+      }
     } catch (e) {
-      setPullStatus('Erreur : ' + e.message)
+      setPullStatus(e.message.includes('source') ? 'Compte source non configuré' : 'Erreur : ' + e.message)
     } finally {
       setPulling(false)
     }
@@ -260,11 +182,11 @@ function ShoppingList({ weekStart }) {
       <div className="flex items-center justify-between">
         <p className="text-xs text-gray-400">{data.days_with_menu}/{data.total_days} jours · {data.items.length} ingrédients</p>
         <div className="flex gap-2">
-          <button onClick={handlePull} disabled={pulling}
+          <button onClick={handleSync} disabled={pulling}
             className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 transition-colors disabled:opacity-50 text-gray-300"
-            title="Tirer les recettes depuis le Gist partenaire">
+            title="Synchroniser les recettes depuis le compte source">
             {pulling ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-            <span className="hidden sm:inline">Tirer Gist</span>
+            <span className="hidden sm:inline">Synchroniser</span>
           </button>
           {Object.keys(checked).length > 0 && (
             <button onClick={uncheckAll} className="text-xs px-2.5 py-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 transition-colors text-gray-400">
@@ -333,8 +255,6 @@ export default function Nutrition() {
   const [error, setError] = useState(null)
   const [generatingWeek, setGeneratingWeek] = useState(false)
   const [weekGenStatus, setWeekGenStatus] = useState(null)
-  const [pushing, setPushing] = useState(false)
-  const [pushStatus, setPushStatus] = useState(null)
 
   const loadWeek = (from) => {
     api.getNutritionWeek(from).then(setWeekData).catch(() => {})
@@ -382,21 +302,7 @@ export default function Nutrition() {
     }
   }
 
-  const handlePushGist = async () => {
-    setPushing(true)
-    setPushStatus(null)
-    try {
-      const r = await api.pushGist(weekStart)
-      setPushStatus(`✓ ${r.days} menus poussés`)
-      setTimeout(() => setPushStatus(null), 4000)
-    } catch (e) {
-      setPushStatus('Erreur : ' + e.message)
-    } finally {
-      setPushing(false)
-    }
-  }
-
-  useEffect(() => { loadWeek(weekStart) }, [weekStart])
+useEffect(() => { loadWeek(weekStart) }, [weekStart])
   useEffect(() => { loadDay(selectedDate) }, [selectedDate])
 
   const prevWeek = () => {
@@ -432,28 +338,12 @@ export default function Nutrition() {
             {generatingWeek ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
             <span className="hidden sm:inline">Semaine</span>
           </button>
-          <button
-            onClick={handlePushGist}
-            disabled={pushing}
-            title="Pousser les menus vers GitHub Gist"
-            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 transition-colors disabled:opacity-50 text-gray-300"
-          >
-            {pushing ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
-            <span className="hidden sm:inline">Gist</span>
-          </button>
           <button onClick={() => setShowSettings(true)} className="p-2 rounded-lg hover:bg-dark-700 text-gray-400 hover:text-white transition-colors">
             <Settings size={18} />
           </button>
         </div>
       </div>
 
-      {/* Status push Gist */}
-      {pushStatus && (
-        <div className={`text-xs px-3 py-2 rounded-lg flex items-center gap-2 ${pushStatus.startsWith('✓') ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300'}`}>
-          <Github size={12} />{pushStatus}
-          {!pushStatus.startsWith('✓') && <span className="text-gray-400 ml-1">— Configure le token dans Paramètres → Partage Gist</span>}
-        </div>
-      )}
 
       {/* Onglets Menus / Courses */}
       <div className="flex gap-1 bg-dark-800 rounded-lg p-0.5 border border-dark-600">
