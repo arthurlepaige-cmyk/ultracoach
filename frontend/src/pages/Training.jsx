@@ -6,6 +6,7 @@ import { api } from '../api'
 import { format, parseISO, differenceInDays } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import AddRaceModal from '../components/AddRaceModal'
+import ZoneSchematic from '../components/ZoneSchematic'
 
 const PHASE_ICONS = { 'Base': '🏃', 'Charge': '💪', 'Spécificité': '🎯', 'Affûtage': '⚡', 'Race Week': '🏁' }
 
@@ -1275,6 +1276,9 @@ export default function Training() {
           </div>
         </div>
       )}
+
+      {/* HR zones + pace reference */}
+      <ZoneSchematic />
 
       {/* Race plans — primary planning source */}
       <RacePlanSection />

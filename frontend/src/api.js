@@ -53,6 +53,7 @@ export const api = {
   // Athlete
   getAthlete: () => get('/athlete'),
   getZones: () => get('/athlete/zones'),
+  getPaceZones: () => get('/athlete/pace-zones'),
   getInsights: () => get('/athlete/insights'),
 
   // Activities

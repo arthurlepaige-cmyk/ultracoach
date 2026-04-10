@@ -93,6 +93,58 @@ router.get('/zones', (req, res) => {
   res.json(data.athlete.zones_karvonen);
 });
 
+// GET /api/athlete/pace-zones — BPM zones + estimated flat pace per zone from history
+router.get('/pace-zones', (req, res) => {
+  const data = loadData();
+  const { zones_karvonen: zones, fc_repos, fc_max } = data.athlete;
+
+  // Build pace estimate per zone from historical outdoor activities with HR data
+  const zoneKeys = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5'];
+  const buckets = { Z1: [], Z2: [], Z3: [], Z4: [], Z5: [] };
+
+  const outdoor = (data.activities || []).filter(a =>
+    a.Distance_km > 5 &&
+    a.HR_moy > 0 &&
+    a.Temps_h > 0 &&
+    !a.is_treadmill
+  );
+
+  for (const a of outdoor) {
+    const hr = a.HR_moy;
+    const paceRaw = (a.Temps_h * 60) / a.Distance_km; // min/km raw
+    const dPerKm = (a.D_plus_exact || 0) / a.Distance_km;
+    const paceFlat = paceRaw - (dPerKm / 100) * 1.0; // flat-equivalent pace
+
+    if (paceFlat < 3 || paceFlat > 15) continue; // sanity filter
+
+    for (const z of zoneKeys) {
+      const [lo, hi] = zones[z];
+      if (hr >= lo && (hr < hi || z === 'Z5')) {
+        buckets[z].push(paceFlat);
+        break;
+      }
+    }
+  }
+
+  const result = {};
+  for (const z of zoneKeys) {
+    const [bpmMin, bpmMax] = zones[z];
+    const paces = buckets[z];
+    let pace_min = null, pace_max = null;
+    if (paces.length >= 3) {
+      paces.sort((a, b) => a - b);
+      // Use 10th-90th percentile range
+      const lo = paces[Math.floor(paces.length * 0.1)];
+      const hi = paces[Math.floor(paces.length * 0.9)];
+      pace_min = Math.round(lo * 10) / 10;
+      pace_max = Math.round(hi * 10) / 10;
+    }
+    result[z] = { bpm_min: bpmMin, bpm_max: bpmMax, pace_min, pace_max, samples: paces.length };
+  }
+
+  res.json({ zones: result, fc_repos, fc_max });
+});
+
 // GET /api/athlete/insights
 router.get('/insights', (req, res) => {
   const data = loadData();
