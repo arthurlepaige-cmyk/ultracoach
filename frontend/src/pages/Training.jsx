@@ -7,6 +7,7 @@ import { format, parseISO, differenceInDays } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import AddRaceModal from '../components/AddRaceModal'
 import ZoneSchematic from '../components/ZoneSchematic'
+import SessionZoneBar from '../components/SessionZoneBar'
 
 const PHASE_ICONS = { 'Base': '🏃', 'Charge': '💪', 'Spécificité': '🎯', 'Affûtage': '⚡', 'Race Week': '🏁' }
 
@@ -100,9 +101,17 @@ function SessionCard({ session, isToday }) {
             {session.dplus > 0 && (
               <span className="flex items-center gap-1 text-brand-purple"><Mountain size={10} />{session.dplus} m D+</span>
             )}
-            {session.fc_target && <span className="text-red-400">♥ max {session.fc_target} bpm</span>}
-            {session.zone && <span className="flex items-center gap-1 text-brand-orange"><Target size={10} />{session.zone}</span>}
+            {session.fc_target && !session.zone && <span className="text-red-400">♥ max {session.fc_target} bpm</span>}
           </div>
+        )}
+
+        {!isRest && (session.zone || session.fc_target) && (
+          <SessionZoneBar
+            zone={session.zone}
+            fc_max={session.fc_target}
+            dplus_m={session.dplus}
+            km={session.distance}
+          />
         )}
 
         {/* Strength: exercise list with video links */}
@@ -841,9 +850,17 @@ function DayCard({ dayData, date, today }) {
                                 <Clock size={9} />{s.duration_min}min
                               </span>
                             )}
-                            {s.fc_max && <span className="text-xs text-red-400">FC&nbsp;max&nbsp;{s.fc_max}</span>}
-                            {s.zone && <span className="text-xs text-brand-orange">{s.zone}</span>}
+                            {s.fc_max && !s.zone && <span className="text-xs text-red-400">FC&nbsp;max&nbsp;{s.fc_max}</span>}
                           </div>
+                          {(s.zone || s.fc_max) && (
+                            <SessionZoneBar
+                              zone={s.zone}
+                              fc_max={s.fc_max}
+                              dplus_m={s.dplus_m}
+                              km={s.km}
+                              compact
+                            />
+                          )}
                           {s.location && (
                             <p className="text-xs text-gray-600 mt-1">{s.location}</p>
                           )}
@@ -1036,9 +1053,17 @@ function SessionRow({ s, sportColor }) {
           {(s.km || s.distance) > 0 && <span className="text-xs text-brand-blue">{s.km || s.distance}km</span>}
           {(s.dplus_m || s.dplus) > 0 && <span className="text-xs text-brand-purple">D+{s.dplus_m || s.dplus}m</span>}
           {s.duration_min > 0 && <span className="text-xs text-gray-500">{s.duration_min}min</span>}
-          {(s.fc_max || s.fc_target) > 0 && <span className="text-xs text-red-400">♥ max {s.fc_max || s.fc_target}</span>}
-          {s.zone && <span className="text-xs text-gray-500">{s.zone}</span>}
+          {(s.fc_max || s.fc_target) > 0 && !s.zone && <span className="text-xs text-red-400">♥ max {s.fc_max || s.fc_target}</span>}
         </div>
+        {(s.zone || s.fc_max || s.fc_target) && (
+          <SessionZoneBar
+            zone={s.zone}
+            fc_max={s.fc_max || s.fc_target}
+            dplus_m={s.dplus_m || s.dplus}
+            km={s.km || s.distance}
+            compact
+          />
+        )}
         {s.sessions?.length > 0 && (
           <div className="mt-1.5 space-y-1">
             {s.sessions.map((ss, i) => (
