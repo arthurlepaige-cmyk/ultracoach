@@ -141,6 +141,13 @@ export const api = {
   // Liste de courses commune
   getShoppingList: (from) => get(`/nutrition/shopping-list${from ? '?from=' + from : ''}`),
 
+  // Sync Garmin / Suunto
+  getSyncStatus: () => get('/sync/status'),
+  saveGarminConfig: (username, password) => put('/sync/garmin/config', { username, password }),
+  deleteGarminConfig: () => del('/sync/garmin/config'),
+  testGarminConnection: (username, password) => post('/sync/garmin/test', { username, password }),
+  runGarminSync: () => post('/sync/garmin/run', {}),
+
   // Import / premier démarrage
   getImportStatus: () => get('/import/status'),
   convertImport: (raw_data, source, athlete_profile) => post('/import/convert', { raw_data, source, athlete_profile }),

@@ -172,6 +172,20 @@ function initSchema(db) {
     if (!existingCols.includes(col)) db.exec(`ALTER TABLE race_targets ADD COLUMN ${col} ${def}`);
   }
 
+  // Table sync (Garmin, Suunto…)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sync_config (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL UNIQUE,
+      username TEXT,
+      password_encrypted TEXT,
+      last_sync TEXT,
+      last_sync_activities INTEGER DEFAULT 0,
+      last_sync_status TEXT,
+      enabled INTEGER DEFAULT 1
+    );
+  `);
+
   // Tables nutrition
   db.exec(`
     CREATE TABLE IF NOT EXISTS nutrition_settings (

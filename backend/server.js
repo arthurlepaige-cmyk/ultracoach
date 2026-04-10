@@ -26,6 +26,7 @@ app.use('/api/training', requireAuth, require('./routes/training'));
 app.use('/api/race', requireAuth, require('./routes/race').router);
 const healthRoutes = require('./routes/health');
 app.use('/api/health', requireAuth, healthRoutes);
+app.use('/api/sync', requireAuth, require('./routes/sync'));
 
 // Health check (server status)
 app.get('/api/status', (req, res) => res.json({ ok: true, ts: new Date().toISOString() }));

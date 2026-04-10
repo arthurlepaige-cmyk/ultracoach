@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { User, Upload, Cpu, CheckCircle, AlertTriangle, ChevronRight, ChevronLeft, Mountain, FileText, Loader2 } from 'lucide-react'
+import { User, Upload, Cpu, CheckCircle, AlertTriangle, ChevronRight, ChevronLeft, Mountain, FileText, Loader2, RefreshCw, Wifi, WifiOff, Trash2 } from 'lucide-react'
 import { api } from '../api'
 
 const STEPS = ['Profil', 'Données', 'Conversion', 'Terminé']
@@ -54,7 +54,191 @@ const SOURCES = [
   },
 ]
 
+function SyncTab({ onClose }) {
+  const [garmin, setGarmin] = useState({ username: '', password: '' })
+  const [status, setStatus] = useState(null)   // { garmin: {...} }
+  const [testing, setTesting] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [msg, setMsg] = useState(null)          // { ok, text }
+  const [showPassword, setShowPassword] = useState(false)
+
+  useEffect(() => {
+    api.getSyncStatus().then(s => {
+      setStatus(s)
+      if (s.garmin?.username) setGarmin(g => ({ ...g, username: s.garmin.username }))
+    }).catch(() => {})
+  }, [])
+
+  async function handleTest() {
+    if (!garmin.username || !garmin.password) return
+    setTesting(true); setMsg(null)
+    try {
+      const r = await api.testGarminConnection(garmin.username, garmin.password)
+      setMsg({ ok: true, text: `Connexion OK — compte : ${r.name}` })
+    } catch (e) {
+      setMsg({ ok: false, text: e.message })
+    } finally { setTesting(false) }
+  }
+
+  async function handleSave() {
+    if (!garmin.username || !garmin.password) return
+    setSaving(true); setMsg(null)
+    try {
+      await api.saveGarminConfig(garmin.username, garmin.password)
+      const s = await api.getSyncStatus()
+      setStatus(s)
+      setMsg({ ok: true, text: 'Identifiants sauvegardés' })
+      setGarmin(g => ({ ...g, password: '' }))
+    } catch (e) {
+      setMsg({ ok: false, text: e.message })
+    } finally { setSaving(false) }
+  }
+
+  async function handleSync() {
+    setSyncing(true); setMsg(null)
+    try {
+      const r = await api.runGarminSync()
+      const s = await api.getSyncStatus()
+      setStatus(s)
+      setMsg({ ok: true, text: `Sync OK — ${r.savedActivities} activité(s) + ${r.savedHealthDays} jour(s) santé` })
+    } catch (e) {
+      setMsg({ ok: false, text: e.message })
+    } finally { setSyncing(false) }
+  }
+
+  async function handleDelete() {
+    if (!confirm('Supprimer les identifiants Garmin ?')) return
+    await api.deleteGarminConfig()
+    setStatus(s => ({ ...s, garmin: null }))
+    setGarmin({ username: '', password: '' })
+    setMsg({ ok: true, text: 'Identifiants supprimés' })
+  }
+
+  const isConfigured = !!status?.garmin?.username
+  const lastSync = status?.garmin?.last_sync
+
+  return (
+    <div className="space-y-5">
+      {/* Garmin */}
+      <div className="card space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-brand-blue/10 text-xl">⌚</div>
+            <div>
+              <h3 className="font-bold">Garmin Connect</h3>
+              <p className="text-xs text-gray-400">Activités + HRV + FC repos + sommeil</p>
+            </div>
+          </div>
+          {isConfigured
+            ? <span className="flex items-center gap-1 text-xs text-brand-green"><Wifi size={12} />Configuré</span>
+            : <span className="flex items-center gap-1 text-xs text-gray-500"><WifiOff size={12} />Non configuré</span>
+          }
+        </div>
+
+        {lastSync && (
+          <div className="p-2 rounded bg-dark-700 text-xs text-gray-400">
+            Dernière sync : {new Date(lastSync).toLocaleString('fr-FR')} · {status.garmin.last_sync_activities} activité(s)
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Email Garmin Connect</label>
+            <input
+              className="input-field w-full"
+              placeholder="ton.email@exemple.com"
+              value={garmin.username}
+              onChange={e => setGarmin(g => ({ ...g, username: e.target.value }))}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Mot de passe Garmin</label>
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                className="input-field w-full pr-16"
+                placeholder={isConfigured ? '••••••••' : 'Mot de passe'}
+                value={garmin.password}
+                onChange={e => setGarmin(g => ({ ...g, password: e.target.value }))}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(v => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-white px-1"
+              >
+                {showPassword ? 'Cacher' : 'Voir'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {msg && (
+          <p className={`text-xs px-3 py-2 rounded-lg ${msg.ok ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300'}`}>
+            {msg.text}
+          </p>
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={handleTest}
+            disabled={!garmin.username || !garmin.password || testing}
+            className="btn-secondary flex items-center gap-1.5 text-sm disabled:opacity-40"
+          >
+            {testing ? <Loader2 size={13} className="animate-spin" /> : <Wifi size={13} />}
+            Tester
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={!garmin.username || !garmin.password || saving}
+            className="btn-secondary flex items-center gap-1.5 text-sm disabled:opacity-40"
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
+            Sauvegarder
+          </button>
+          {isConfigured && (
+            <>
+              <button
+                onClick={handleSync}
+                disabled={syncing}
+                className="btn-primary flex items-center gap-1.5 text-sm disabled:opacity-40"
+              >
+                {syncing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                {syncing ? 'Sync en cours…' : 'Synchroniser maintenant'}
+              </button>
+              <button onClick={handleDelete} className="p-2 rounded-lg hover:bg-red-500/10 text-gray-500 hover:text-red-400 transition-colors">
+                <Trash2 size={14} />
+              </button>
+            </>
+          )}
+        </div>
+
+        <p className="text-xs text-gray-500">
+          Tes identifiants sont chiffrés (AES-256) et stockés uniquement sur ton serveur.
+          La sync récupère les 90 derniers jours d'activités et 30 jours de données santé.
+        </p>
+      </div>
+
+      {/* Suunto — placeholder */}
+      <div className="card opacity-50 pointer-events-none space-y-3">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-dark-600 text-xl">🔵</div>
+          <div>
+            <h3 className="font-bold">Suunto</h3>
+            <p className="text-xs text-gray-400">Bientôt disponible — API OAuth2 en cours d'intégration</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <button onClick={onClose} className="btn-secondary">Fermer</button>
+      </div>
+    </div>
+  )
+}
+
 export default function Setup({ onComplete }) {
+  const [tab, setTab] = useState('import')  // 'import' | 'sync'
   const [step, setStep] = useState(0)
   const [profile, setProfile] = useState({ name: '', fc_repos: '', fc_max: '', vo2max_current: '' })
   const [source, setSource] = useState(null)
@@ -130,6 +314,25 @@ export default function Setup({ onComplete }) {
           <span className="font-bold text-2xl text-gradient">Ultra Coach</span>
         </div>
 
+        {/* Tab selector */}
+        <div className="flex gap-1 mb-6 bg-dark-800 p-1 rounded-xl">
+          <button
+            onClick={() => setTab('import')}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'import' ? 'bg-dark-600 text-white' : 'text-gray-400 hover:text-white'}`}
+          >
+            Profil & Import
+          </button>
+          <button
+            onClick={() => setTab('sync')}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'sync' ? 'bg-dark-600 text-white' : 'text-gray-400 hover:text-white'}`}
+          >
+            Sync automatique
+          </button>
+        </div>
+
+        {tab === 'sync' && <SyncTab onClose={onComplete} />}
+
+        {tab === 'import' && <>
         {/* Step indicator */}
         <div className="flex gap-2 mb-6">
           {STEPS.map((s, i) => (
@@ -377,6 +580,7 @@ export default function Setup({ onComplete }) {
           )}
 
         </AnimatePresence>
+        </>}
       </div>
     </div>
   )

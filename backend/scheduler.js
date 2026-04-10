@@ -72,13 +72,42 @@ async function checkMissedGeneration() {
   }
 }
 
+async function syncAllUsers() {
+  const { getAuthDb } = require('./db');
+  const { syncGarmin } = require('./garminSync');
+
+  const users = getAuthDb().prepare('SELECT id FROM users').all();
+  for (const { id } of users) {
+    try {
+      // Vérifie si cet utilisateur a une config Garmin
+      const { getDb } = require('./db');
+      const { runWithUser } = require('./userContext');
+      const hasConfig = runWithUser(id, () => {
+        const db = getDb();
+        return db.prepare('SELECT id FROM sync_config WHERE provider = ? AND enabled = 1').get('garmin');
+      });
+      if (!hasConfig) continue;
+
+      const result = await syncGarmin(id);
+      console.log(`[scheduler:sync] user ${id.slice(0, 8)} — ${result.savedActivities} activités, ${result.savedHealthDays} jours santé`);
+    } catch (e) {
+      console.error(`[scheduler:sync] user ${id.slice(0, 8)} — erreur: ${e.message}`);
+    }
+  }
+}
+
 function initScheduler() {
   // Tous les samedis à 20h00 — génère les menus de la semaine suivante
   cron.schedule('0 20 * * 6', () => {
     generateWeekMenus('auto-samedi').catch(e => console.error('[scheduler] Erreur fatale:', e.message));
   }, { timezone: 'Europe/Brussels' });
 
-  console.log('[scheduler] Actif — génération nutrition tous les samedis à 20h00 (Europe/Brussels)');
+  // Tous les jours à 06h00 — sync Garmin pour tous les utilisateurs configurés
+  cron.schedule('0 6 * * *', () => {
+    syncAllUsers().catch(e => console.error('[scheduler:sync] Erreur:', e.message));
+  }, { timezone: 'Europe/Brussels' });
+
+  console.log('[scheduler] Actif — nutrition sam. 20h00, sync Garmin tous les jours 06h00 (Europe/Brussels)');
 
   // Rattrapage au démarrage si la génération du samedi a été manquée
   setTimeout(() => {
