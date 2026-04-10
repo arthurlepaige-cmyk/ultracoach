@@ -105,4 +105,20 @@ Sans ce fichier, l'app utilise un profil synthétique avec avertissement visuel.
 ```sql
 daily_logs     -- Entrées quotidiennes: FC repos, HRV, séance, AEI calculé…
 race_targets   -- Courses cibles (importées depuis JSON au 1er lancement)
+daily_briefing -- Cache briefing IA (date PK, text, generated_at)
+```
+
+## Déploiement — Oracle Cloud
+
+- **Serveur** : `ubuntu@130.61.178.50`
+- **Clé SSH** : `~/Downloads/ssh-key-2026-04-10-3.key`
+- **Repo GitHub** : `https://github.com/arthurlepaige-cmyk/ultracoach.git`
+
+```bash
+# 1. Committer et pusher en local
+git add <fichiers> && git commit -m "..." && git push origin main
+
+# 2. Déployer sur le serveur (une seule commande)
+ssh -i ~/Downloads/ssh-key-2026-04-10-3.key ubuntu@130.61.178.50 \
+  "cd ~/UltraCoach && git pull && cd frontend && npm install && npm run build && cd .. && pm2 restart ultracoach && pm2 status"
 ```
