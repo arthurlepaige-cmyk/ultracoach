@@ -22,13 +22,13 @@ def load_api(tokens_path):
     from garminconnect import Garmin
     api = Garmin()
     with open(tokens_path, 'r') as f:
-        api.garth.loads(f.read())
+        api.client.loads(f.read())
     return api
 
 def save_tokens(api, tokens_path):
     os.makedirs(os.path.dirname(tokens_path), exist_ok=True)
     with open(tokens_path, 'w') as f:
-        f.write(api.garth.dumps())
+        f.write(api.client.dumps())
 
 # ── Haversine distance ──────────────────────────────────────────────────────
 def haversine(lat1, lon1, lat2, lon2):
@@ -78,34 +78,45 @@ def parse_gpx(gpx_bytes):
 def cmd_init(email, password, tokens_path):
     from garminconnect import Garmin, GarminConnectAuthenticationError
     try:
-        api = Garmin(email=email, password=password)
-        api.login()
-        save_tokens(api, tokens_path)
-        out({"ok": True, "need_mfa": False})
-    except GarminConnectAuthenticationError as e:
-        msg = str(e)
-        if "MFA" in msg or "NEEDS_MFA" in msg or "2FA" in msg or "NeedsMFAToken" in msg:
+        api = Garmin(email=email, password=password, return_on_mfa=True)
+        client_state, _ = api.login()
+        if client_state is not None:
+            # MFA required — persist client_state dict + partial client tokens
             state_path = tokens_path + ".mfa_state"
             os.makedirs(os.path.dirname(state_path), exist_ok=True)
+            import json as _json
             with open(state_path, 'w') as f:
-                f.write(api.garth.dumps())
+                _json.dump({
+                    "client_state": client_state,
+                    "client_tokens": api.client.dumps(),
+                    "email": email,
+                    "password": password,
+                }, f)
             out({"ok": True, "need_mfa": True})
         else:
-            out({"ok": False, "error": msg})
+            save_tokens(api, tokens_path)
+            out({"ok": True, "need_mfa": False})
+    except GarminConnectAuthenticationError as e:
+        out({"ok": False, "error": str(e)})
     except Exception as e:
         out({"ok": False, "error": str(e)})
 
 def cmd_mfa(mfa_code, tokens_path):
     from garminconnect import Garmin
+    import json as _json
     try:
         state_path = tokens_path + ".mfa_state"
         if not os.path.exists(state_path):
             out({"ok": False, "error": "Session MFA expirée, relancez la connexion"})
             return
-        api = Garmin()
         with open(state_path, 'r') as f:
-            api.garth.loads(f.read())
-        api.garth.resume(mfa_code)
+            state = _json.load(f)
+        email = state.get("email", "")
+        password = state.get("password", "")
+        client_state = state["client_state"]
+        api = Garmin(email=email, password=password, return_on_mfa=True)
+        api.client.loads(state["client_tokens"])
+        api.resume_login(client_state, mfa_code)
         save_tokens(api, tokens_path)
         os.remove(state_path)
         out({"ok": True})
@@ -425,12 +436,12 @@ def cmd_export_workouts(tokens_path, sessions_json_path):
 
             try:
                 wkt = build_garmin_workout(s)
-                resp = api.garth.post("workout-service/workout", json=wkt)
-                workout_id = resp.json().get("workoutId")
+                resp = api.client.post("workout-service/workout", json=wkt)
+                workout_id = resp.get("workoutId") if isinstance(resp, dict) else resp.json().get("workoutId")
                 if not workout_id:
                     results.append({"date": s["date"], "type": s["type"], "ok": False, "error": "No workoutId returned"})
                     continue
-                api.garth.post(f"workout-service/schedule/{workout_id}", json={"date": s["date"]})
+                api.client.post(f"workout-service/schedule/{workout_id}", json={"date": s["date"]})
                 results.append({"date": s["date"], "type": s["type"], "ok": True, "name": wkt["workoutName"]})
             except Exception as e:
                 results.append({"date": s["date"], "type": s.get("type", "?"), "ok": False, "error": str(e)})
