@@ -10,7 +10,7 @@ const path = require('path');
 
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
+  secure: process.env.NODE_ENV === 'production' && process.env.COOKIE_SECURE !== 'false',
   sameSite: 'lax',
   maxAge: 30 * 24 * 60 * 60 * 1000, // 30 jours
 };
