@@ -235,6 +235,189 @@ router.get('/pace-zones', (req, res) => {
   });
 });
 
+// ── Daily briefing helpers ──
+function buildBriefingContext() {
+  const data = loadData();
+  const db = getDb();
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Health from last daily log (today or yesterday)
+  const recentLog = db.prepare(
+    'SELECT * FROM daily_logs ORDER BY date DESC LIMIT 1'
+  ).get();
+
+  // Recent HRV trend (7 days)
+  const recentLogs = db.prepare(
+    'SELECT date, hrv, fc_repos, sensation, sleep_h, sleep_quality FROM daily_logs ORDER BY date DESC LIMIT 7'
+  ).all();
+  const hrvVals = recentLogs.filter(l => l.hrv).map(l => l.hrv);
+  const fcVals  = recentLogs.filter(l => l.fc_repos).map(l => l.fc_repos);
+  const hrvTrend = hrvVals.length >= 2
+    ? (hrvVals[0] > hrvVals[hrvVals.length - 1] ? 'hausse' : hrvVals[0] < hrvVals[hrvVals.length - 1] ? 'baisse' : 'stable')
+    : 'inconnu';
+  const fcTrend = fcVals.length >= 2
+    ? (fcVals[0] < fcVals[fcVals.length - 1] ? 'baisse' : fcVals[0] > fcVals[fcVals.length - 1] ? 'hausse' : 'stable')
+    : 'inconnu';
+
+  // Load last 7 days activities
+  const cutoff7 = new Date(Date.now() - 7 * 864e5).toISOString().slice(0, 10);
+  const recentActs = (data.activities || []).filter(a => a.Date >= cutoff7);
+  const vol7km   = recentActs.reduce((s, a) => s + (a.Distance_km || 0), 0).toFixed(1);
+  const vol7dplus = recentActs.reduce((s, a) => s + (a.D_plus_exact || 0), 0).toFixed(0);
+
+  // AEI rolling
+  const aei = data.aei_rolling ?? data.athlete?.aei_rolling;
+
+  // Race countdowns
+  const races = db.prepare('SELECT name, date, distance_km, dplus_m FROM race_targets WHERE active = 1 ORDER BY date ASC').all();
+  const upcomingRaces = races
+    .filter(r => r.date >= today)
+    .map(r => {
+      const days = Math.round((new Date(r.date) - new Date(today)) / 864e5);
+      return `${r.name} (${r.distance_km}km/${r.dplus_m}m D+) dans J-${days}`;
+    });
+
+  // Today's planned session from AI or generic plan
+  let todaySession = 'Non renseignée';
+  try {
+    const { getTrainingPhase, getBlockWeek } = require('../calc');
+    const phase = getTrainingPhase(data, today);
+    if (phase) todaySession = `Phase ${phase.phase} — ${phase.description}`;
+  } catch {}
+
+  // Day status
+  const dayStatus = recentLog?.hrv && recentLog?.fc_repos
+    ? (recentLog.fc_repos >= 56 ? 'REPOS' : recentLog.hrv < 50 ? 'VIGILANCE' : 'OPTIMAL')
+    : 'OPTIMAL';
+
+  // Pain alerts
+  const painAlerts = [];
+  if (recentLog?.pain_zones) {
+    try {
+      const zones = JSON.parse(recentLog.pain_zones);
+      Object.entries(zones).forEach(([z, lvl]) => { if (lvl >= 2) painAlerts.push(`${z} (${lvl}/3)`); });
+    } catch {}
+  }
+
+  return {
+    today,
+    log: recentLog,
+    hrvTrend,
+    fcTrend,
+    vol7km,
+    vol7dplus,
+    vol7n: recentActs.length,
+    aei,
+    dayStatus,
+    upcomingRaces,
+    todaySession,
+    painAlerts,
+    athlete: data.athlete,
+  };
+}
+
+// GET /api/athlete/daily-briefing — AI-generated daily text, cached per day
+router.get('/daily-briefing', async (req, res) => {
+  try {
+    const db = getDb();
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Serve cache if generated today
+    const cached = db.prepare('SELECT text, generated_at FROM daily_briefing WHERE date = ?').get(today);
+    if (cached) return res.json({ text: cached.text, generated_at: cached.generated_at, cached: true });
+
+    // Build context and generate
+    const ctx = buildBriefingContext();
+    const { callAI } = require('../ai');
+
+    const systemPrompt = `Tu es le coach personnel d'Arthur, traileur confirmé préparant les Chevaliers 2026 (157km/4590m) et l'UTMB 2026.
+Génère un briefing quotidien en français, personnel et direct, comme un message de coach à son athlète.
+Ton style : tonique, bienveillant, factuel. Pas de markdown, pas de titres, texte fluide 4-6 phrases.
+Couvre dans l'ordre : état de forme du moment, ce que disent les données de santé, la séance ou les priorités du jour, un rappel motivant sur l'objectif proche.
+Adapte le ton à l'état réel (si fatigué → récupération, si frais → challenge, si alerte → prudence).`;
+
+    const lines = [
+      `Date : ${ctx.today}`,
+      ctx.upcomingRaces.length > 0 ? `Prochaines courses : ${ctx.upcomingRaces.join(' | ')}` : '',
+      '',
+      'SANTÉ :',
+      ctx.log?.fc_repos   ? `- FC repos : ${ctx.log.fc_repos} bpm (tendance ${ctx.fcTrend})` : '',
+      ctx.log?.hrv        ? `- HRV : ${ctx.log.hrv} ms (tendance ${ctx.hrvTrend})` : '',
+      ctx.log?.sleep_h    ? `- Sommeil : ${ctx.log.sleep_h}h (qualité ${ctx.log.sleep_quality ?? '?'}/5)` : '',
+      ctx.log?.sensation  ? `- Sensation : ${ctx.log.sensation}/5` : '',
+      ctx.log?.body_battery_morning ? `- Body Battery matin : ${ctx.log.body_battery_morning}` : '',
+      '',
+      'FORME :',
+      ctx.aei ? `- AEI récent : ${typeof ctx.aei === 'object' ? ctx.aei.value ?? JSON.stringify(ctx.aei) : ctx.aei}` : '',
+      `- Statut du jour : ${ctx.dayStatus}`,
+      '',
+      `CHARGE 7j : ${ctx.vol7km}km / ${ctx.vol7dplus}m D+ (${ctx.vol7n} sorties)`,
+      `SÉANCE PRÉVUE : ${ctx.todaySession}`,
+      ctx.painAlerts.length > 0 ? `ALERTES DOULEUR : ${ctx.painAlerts.join(', ')}` : '',
+    ].filter(Boolean).join('\n');
+
+    const result = await callAI(systemPrompt, lines);
+    const text = result.text.trim();
+    const generatedAt = new Date().toISOString();
+
+    db.prepare('INSERT OR REPLACE INTO daily_briefing (date, text, generated_at) VALUES (?, ?, ?)')
+      .run(today, text, generatedAt);
+
+    res.json({ text, generated_at: generatedAt, cached: false });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/athlete/daily-briefing/refresh — force regeneration
+router.post('/daily-briefing/refresh', async (req, res) => {
+  try {
+    const db = getDb();
+    const today = new Date().toISOString().slice(0, 10);
+    db.prepare('DELETE FROM daily_briefing WHERE date = ?').run(today);
+
+    const ctx = buildBriefingContext();
+    const { callAI } = require('../ai');
+
+    const systemPrompt = `Tu es le coach personnel d'Arthur, traileur confirmé préparant les Chevaliers 2026 (157km/4590m) et l'UTMB 2026.
+Génère un briefing quotidien en français, personnel et direct, comme un message de coach à son athlète.
+Ton style : tonique, bienveillant, factuel. Pas de markdown, pas de titres, texte fluide 4-6 phrases.
+Couvre dans l'ordre : état de forme du moment, ce que disent les données de santé, la séance ou les priorités du jour, un rappel motivant sur l'objectif proche.
+Adapte le ton à l'état réel (si fatigué → récupération, si frais → challenge, si alerte → prudence).`;
+
+    const lines = [
+      `Date : ${ctx.today}`,
+      ctx.upcomingRaces.length > 0 ? `Prochaines courses : ${ctx.upcomingRaces.join(' | ')}` : '',
+      '',
+      'SANTÉ :',
+      ctx.log?.fc_repos   ? `- FC repos : ${ctx.log.fc_repos} bpm (tendance ${ctx.fcTrend})` : '',
+      ctx.log?.hrv        ? `- HRV : ${ctx.log.hrv} ms (tendance ${ctx.hrvTrend})` : '',
+      ctx.log?.sleep_h    ? `- Sommeil : ${ctx.log.sleep_h}h (qualité ${ctx.log.sleep_quality ?? '?'}/5)` : '',
+      ctx.log?.sensation  ? `- Sensation : ${ctx.log.sensation}/5` : '',
+      ctx.log?.body_battery_morning ? `- Body Battery matin : ${ctx.log.body_battery_morning}` : '',
+      '',
+      'FORME :',
+      ctx.aei ? `- AEI récent : ${typeof ctx.aei === 'object' ? ctx.aei.value ?? JSON.stringify(ctx.aei) : ctx.aei}` : '',
+      `- Statut du jour : ${ctx.dayStatus}`,
+      '',
+      `CHARGE 7j : ${ctx.vol7km}km / ${ctx.vol7dplus}m D+ (${ctx.vol7n} sorties)`,
+      `SÉANCE PRÉVUE : ${ctx.todaySession}`,
+      ctx.painAlerts.length > 0 ? `ALERTES DOULEUR : ${ctx.painAlerts.join(', ')}` : '',
+    ].filter(Boolean).join('\n');
+
+    const result = await callAI(systemPrompt, lines);
+    const text = result.text.trim();
+    const generatedAt = new Date().toISOString();
+
+    db.prepare('INSERT OR REPLACE INTO daily_briefing (date, text, generated_at) VALUES (?, ?, ?)')
+      .run(today, text, generatedAt);
+
+    res.json({ text, generated_at: generatedAt, cached: false });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/athlete/insights
 router.get('/insights', (req, res) => {
   const data = loadData();

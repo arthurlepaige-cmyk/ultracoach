@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { Heart, Zap, TrendingUp, Activity, Wind, Mountain, Moon, Dumbbell } from 'lucide-react'
+import { Heart, Zap, TrendingUp, Activity, Wind, Mountain, Moon, Dumbbell, RefreshCw, MessageSquare } from 'lucide-react'
 import { api } from '../api'
 import { useApi } from '../hooks/useApi'
 import RaceCountdown from '../components/RaceCountdown'
@@ -84,6 +84,76 @@ function RecoveryRing({ score }) {
       </div>
       <span className="text-xs text-gray-500 mt-1">Score récup.</span>
     </div>
+  )
+}
+
+function DailyBriefingCard() {
+  const [state, setState] = useState({ text: null, generated_at: null, loading: true, error: null, refreshing: false })
+
+  const load = async (refresh = false) => {
+    setState(s => ({ ...s, loading: !refresh, refreshing: refresh, error: null }))
+    try {
+      const data = refresh ? await api.refreshDailyBriefing() : await api.getDailyBriefing()
+      setState({ text: data.text, generated_at: data.generated_at, loading: false, refreshing: false, error: null })
+    } catch (e) {
+      setState(s => ({ ...s, loading: false, refreshing: false, error: e.message }))
+    }
+  }
+
+  useEffect(() => { load() }, [])
+
+  const timeLabel = state.generated_at
+    ? new Date(state.generated_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+    : null
+
+  if (state.loading) {
+    return (
+      <div className="card space-y-2 animate-pulse">
+        <div className="h-3 bg-dark-600 rounded w-1/3" />
+        <div className="h-3 bg-dark-600 rounded w-full" />
+        <div className="h-3 bg-dark-600 rounded w-5/6" />
+        <div className="h-3 bg-dark-600 rounded w-4/5" />
+      </div>
+    )
+  }
+
+  if (state.error) {
+    return (
+      <div className="card border border-red-500/20">
+        <p className="text-xs text-red-400">Briefing indisponible — {state.error}</p>
+      </div>
+    )
+  }
+
+  return (
+    <motion.div
+      className="card border border-brand-green/15 bg-gradient-to-br from-dark-800 to-dark-700/50"
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0 }}
+    >
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-full bg-brand-green/20 flex items-center justify-center shrink-0">
+            <MessageSquare size={13} className="text-brand-green" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-brand-green">Briefing du jour</p>
+            {timeLabel && <p className="text-xs text-gray-600">Généré à {timeLabel}</p>}
+          </div>
+        </div>
+        <button
+          onClick={() => load(true)}
+          disabled={state.refreshing}
+          className="p-1.5 rounded-lg text-gray-600 hover:text-gray-300 hover:bg-dark-600 transition-colors disabled:opacity-40"
+          title="Régénérer"
+        >
+          <RefreshCw size={12} className={state.refreshing ? 'animate-spin' : ''} />
+        </button>
+      </div>
+      <p className="text-sm text-gray-300 leading-relaxed whitespace-pre-line">
+        {state.text}
+      </p>
+    </motion.div>
   )
 }
 
@@ -182,6 +252,9 @@ export default function Dashboard() {
         {chevaliers && <RaceCountdown race={chevaliers} color="#1D9E75" />}
         {utmb && <RaceCountdown race={utmb} color="#7F77DD" />}
       </div>
+
+      {/* Daily AI briefing */}
+      <DailyBriefingCard />
 
       {/* ── Daily health card ── */}
       <div className="card">

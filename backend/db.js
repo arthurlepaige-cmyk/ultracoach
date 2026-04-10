@@ -176,6 +176,15 @@ function initSchema(db) {
     if (!existingCols.includes(col)) db.exec(`ALTER TABLE race_targets ADD COLUMN ${col} ${def}`);
   }
 
+  // Briefing quotidien IA
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS daily_briefing (
+      date TEXT PRIMARY KEY,
+      text TEXT NOT NULL,
+      generated_at TEXT NOT NULL
+    );
+  `);
+
   // Table sync (Garmin, Suunto…)
   db.exec(`
     CREATE TABLE IF NOT EXISTS sync_config (

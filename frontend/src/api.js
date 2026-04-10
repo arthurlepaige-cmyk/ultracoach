@@ -54,6 +54,8 @@ export const api = {
   getAthlete: () => get('/athlete'),
   getZones: () => get('/athlete/zones'),
   getPaceZones: () => get('/athlete/pace-zones'),
+  getDailyBriefing: () => get('/athlete/daily-briefing'),
+  refreshDailyBriefing: () => post('/athlete/daily-briefing/refresh', {}),
   getInsights: () => get('/athlete/insights'),
 
   // Activities
