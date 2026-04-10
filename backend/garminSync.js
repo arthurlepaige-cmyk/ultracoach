@@ -55,8 +55,8 @@ function convertActivity(act) {
 
 async function testConnection(username, password) {
   const { GarminConnect } = require('garmin-connect');
-  const client = new GarminConnect();
-  await client.login(username, password);
+  const client = new GarminConnect({ username, password });
+  await client.login();
   let name = username;
   try {
     const profile = await client.getUserProfile();
@@ -80,8 +80,8 @@ async function syncGarmin(userId) {
     }
 
     const { GarminConnect } = require('garmin-connect');
-    const client = new GarminConnect();
-    await client.login(config.username, decryptPassword(config.password_encrypted));
+    const client = new GarminConnect({ username: config.username, password: decryptPassword(config.password_encrypted) });
+    await client.login();
 
     const lastSync = config.last_sync
       ? new Date(config.last_sync)
