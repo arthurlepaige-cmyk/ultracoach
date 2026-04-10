@@ -56,43 +56,59 @@ const SOURCES = [
 
 function SyncTab({ onClose }) {
   const [garmin, setGarmin] = useState({ username: '', password: '' })
-  const [status, setStatus] = useState(null)   // { garmin: {...} }
-  const [testing, setTesting] = useState(false)
-  const [saving, setSaving] = useState(false)
+  const [mfaCode, setMfaCode] = useState('')
+  const [status, setStatus] = useState(null)
+  const [step, setStep] = useState('idle') // idle | connecting | need_mfa | configured
   const [syncing, setSyncing] = useState(false)
-  const [msg, setMsg] = useState(null)          // { ok, text }
+  const [msg, setMsg] = useState(null)
   const [showPassword, setShowPassword] = useState(false)
 
   useEffect(() => {
     api.getSyncStatus().then(s => {
       setStatus(s)
-      if (s.garmin?.username) setGarmin(g => ({ ...g, username: s.garmin.username }))
+      if (s.garmin?.username) {
+        setGarmin(g => ({ ...g, username: s.garmin.username }))
+        setStep('configured')
+      }
     }).catch(() => {})
   }, [])
 
-  async function handleTest() {
+  async function handleConnect() {
     if (!garmin.username || !garmin.password) return
-    setTesting(true); setMsg(null)
+    setStep('connecting'); setMsg(null)
     try {
-      const r = await api.testGarminConnection(garmin.username, garmin.password)
-      setMsg({ ok: true, text: `Connexion OK — compte : ${r.name}` })
+      const r = await api.initGarminConnection(garmin.username, garmin.password)
+      if (r.need_mfa) {
+        setStep('need_mfa')
+        setMsg({ ok: true, text: 'Garmin a envoyé un code de vérification à ton adresse email. Saisis-le ci-dessous.' })
+      } else {
+        const s = await api.getSyncStatus()
+        setStatus(s)
+        setStep('configured')
+        setMsg({ ok: true, text: 'Connexion établie !' })
+        setGarmin(g => ({ ...g, password: '' }))
+      }
     } catch (e) {
+      setStep('idle')
       setMsg({ ok: false, text: e.message })
-    } finally { setTesting(false) }
+    }
   }
 
-  async function handleSave() {
-    if (!garmin.username || !garmin.password) return
-    setSaving(true); setMsg(null)
+  async function handleMfa() {
+    if (!mfaCode.trim()) return
+    setStep('connecting'); setMsg(null)
     try {
-      await api.saveGarminConfig(garmin.username, garmin.password)
+      await api.completeGarminMfa(mfaCode, garmin.username, garmin.password)
       const s = await api.getSyncStatus()
       setStatus(s)
-      setMsg({ ok: true, text: 'Identifiants sauvegardés' })
+      setStep('configured')
+      setMsg({ ok: true, text: 'Connexion Garmin établie !' })
+      setMfaCode('')
       setGarmin(g => ({ ...g, password: '' }))
     } catch (e) {
+      setStep('need_mfa')
       setMsg({ ok: false, text: e.message })
-    } finally { setSaving(false) }
+    }
   }
 
   async function handleSync() {
@@ -108,14 +124,16 @@ function SyncTab({ onClose }) {
   }
 
   async function handleDelete() {
-    if (!confirm('Supprimer les identifiants Garmin ?')) return
+    if (!confirm('Déconnecter Garmin et supprimer les tokens ?')) return
     await api.deleteGarminConfig()
     setStatus(s => ({ ...s, garmin: null }))
     setGarmin({ username: '', password: '' })
-    setMsg({ ok: true, text: 'Identifiants supprimés' })
+    setStep('idle')
+    setMsg({ ok: true, text: 'Connexion Garmin supprimée' })
   }
 
-  const isConfigured = !!status?.garmin?.username
+  const isConfigured = step === 'configured'
+  const isConnecting = step === 'connecting'
   const lastSync = status?.garmin?.last_sync
 
   return (
@@ -131,7 +149,7 @@ function SyncTab({ onClose }) {
             </div>
           </div>
           {isConfigured
-            ? <span className="flex items-center gap-1 text-xs text-brand-green"><Wifi size={12} />Configuré</span>
+            ? <span className="flex items-center gap-1 text-xs text-brand-green"><Wifi size={12} />Connecté</span>
             : <span className="flex items-center gap-1 text-xs text-gray-500"><WifiOff size={12} />Non configuré</span>
           }
         </div>
@@ -142,36 +160,37 @@ function SyncTab({ onClose }) {
           </div>
         )}
 
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs text-gray-400 mb-1 block">Email Garmin Connect</label>
-            <input
-              className="input-field w-full"
-              placeholder="ton.email@exemple.com"
-              value={garmin.username}
-              onChange={e => setGarmin(g => ({ ...g, username: e.target.value }))}
-            />
-          </div>
-          <div>
-            <label className="text-xs text-gray-400 mb-1 block">Mot de passe Garmin</label>
-            <div className="relative">
-              <input
-                type={showPassword ? 'text' : 'password'}
-                className="input-field w-full pr-16"
-                placeholder={isConfigured ? '••••••••' : 'Mot de passe'}
-                value={garmin.password}
-                onChange={e => setGarmin(g => ({ ...g, password: e.target.value }))}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(v => !v)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-white px-1"
-              >
-                {showPassword ? 'Cacher' : 'Voir'}
-              </button>
+        {/* Formulaire connexion */}
+        {!isConfigured && (
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Email Garmin Connect</label>
+              <input className="input-field w-full" placeholder="ton.email@exemple.com"
+                value={garmin.username} onChange={e => setGarmin(g => ({ ...g, username: e.target.value }))} />
             </div>
+            {step !== 'need_mfa' && (
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Mot de passe Garmin</label>
+                <div className="relative">
+                  <input type={showPassword ? 'text' : 'password'}
+                    className="input-field w-full pr-16" placeholder="Mot de passe"
+                    value={garmin.password} onChange={e => setGarmin(g => ({ ...g, password: e.target.value }))} />
+                  <button type="button" onClick={() => setShowPassword(v => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-white px-1">
+                    {showPassword ? 'Cacher' : 'Voir'}
+                  </button>
+                </div>
+              </div>
+            )}
+            {step === 'need_mfa' && (
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Code de vérification (reçu par email Garmin)</label>
+                <input className="input-field w-full tracking-widest text-center text-lg" placeholder="123456"
+                  maxLength={8} value={mfaCode} onChange={e => setMfaCode(e.target.value)} />
+              </div>
+            )}
           </div>
-        </div>
+        )}
 
         {msg && (
           <p className={`text-xs px-3 py-2 rounded-lg ${msg.ok ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300'}`}>
@@ -180,33 +199,34 @@ function SyncTab({ onClose }) {
         )}
 
         <div className="flex flex-wrap gap-2">
-          <button
-            onClick={handleTest}
-            disabled={!garmin.username || !garmin.password || testing}
-            className="btn-secondary flex items-center gap-1.5 text-sm disabled:opacity-40"
-          >
-            {testing ? <Loader2 size={13} className="animate-spin" /> : <Wifi size={13} />}
-            Tester
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={!garmin.username || !garmin.password || saving}
-            className="btn-secondary flex items-center gap-1.5 text-sm disabled:opacity-40"
-          >
-            {saving ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
-            Sauvegarder
-          </button>
+          {!isConfigured && step !== 'need_mfa' && (
+            <button onClick={handleConnect}
+              disabled={!garmin.username || !garmin.password || isConnecting}
+              className="btn-primary flex items-center gap-1.5 text-sm disabled:opacity-40">
+              {isConnecting ? <Loader2 size={13} className="animate-spin" /> : <Wifi size={13} />}
+              {isConnecting ? 'Connexion…' : 'Se connecter à Garmin'}
+            </button>
+          )}
+          {step === 'need_mfa' && (
+            <>
+              <button onClick={handleMfa} disabled={!mfaCode.trim() || isConnecting}
+                className="btn-primary flex items-center gap-1.5 text-sm disabled:opacity-40">
+                {isConnecting ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
+                {isConnecting ? 'Vérification…' : 'Confirmer le code'}
+              </button>
+              <button onClick={() => { setStep('idle'); setMsg(null); }}
+                className="btn-secondary text-sm">Retour</button>
+            </>
+          )}
           {isConfigured && (
             <>
-              <button
-                onClick={handleSync}
-                disabled={syncing}
-                className="btn-primary flex items-center gap-1.5 text-sm disabled:opacity-40"
-              >
+              <button onClick={handleSync} disabled={syncing}
+                className="btn-primary flex items-center gap-1.5 text-sm disabled:opacity-40">
                 {syncing ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
                 {syncing ? 'Sync en cours…' : 'Synchroniser maintenant'}
               </button>
-              <button onClick={handleDelete} className="p-2 rounded-lg hover:bg-red-500/10 text-gray-500 hover:text-red-400 transition-colors">
+              <button onClick={handleDelete}
+                className="p-2 rounded-lg hover:bg-red-500/10 text-gray-500 hover:text-red-400 transition-colors">
                 <Trash2 size={14} />
               </button>
             </>
@@ -214,8 +234,8 @@ function SyncTab({ onClose }) {
         </div>
 
         <p className="text-xs text-gray-500">
-          Tes identifiants sont chiffrés (AES-256) et stockés uniquement sur ton serveur.
-          La sync récupère les 90 derniers jours d'activités et 30 jours de données santé.
+          Connexion sécurisée — les tokens OAuth sont stockés uniquement sur ton serveur.
+          Sync automatique chaque matin à 6h.
         </p>
       </div>
 
@@ -225,7 +245,7 @@ function SyncTab({ onClose }) {
           <div className="p-2 rounded-lg bg-dark-600 text-xl">🔵</div>
           <div>
             <h3 className="font-bold">Suunto</h3>
-            <p className="text-xs text-gray-400">Bientôt disponible — API OAuth2 en cours d'intégration</p>
+            <p className="text-xs text-gray-400">Bientôt disponible</p>
           </div>
         </div>
       </div>

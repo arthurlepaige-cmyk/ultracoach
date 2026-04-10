@@ -153,9 +153,9 @@ export const api = {
 
   // Sync Garmin / Suunto
   getSyncStatus: () => get('/sync/status'),
-  saveGarminConfig: (username, password) => put('/sync/garmin/config', { username, password }),
+  initGarminConnection: (username, password) => post('/sync/garmin/init', { username, password }),
+  completeGarminMfa: (mfa_code, username, password) => post('/sync/garmin/mfa', { mfa_code, username, password }),
   deleteGarminConfig: () => del('/sync/garmin/config'),
-  testGarminConnection: (username, password) => post('/sync/garmin/test', { username, password }),
   runGarminSync: () => post('/sync/garmin/run', {}),
 
   // Import / premier démarrage
