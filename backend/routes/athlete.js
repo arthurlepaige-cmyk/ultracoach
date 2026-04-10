@@ -148,11 +148,11 @@ router.get('/pace-zones', (req, res) => {
   // ── Calibrate flat-equivalent pace per zone ──
   const zoneKeys = ['Z1', 'Z2', 'Z3', 'Z4', 'Z5'];
   const zoneCfg = {
-    Z1: { cutoff: d3m,          fallback: d2y,          maxDplus: 12, maxKm: 999, minSamples: 3 },
-    Z2: { cutoff: d3m,          fallback: d2y,          maxDplus: 12, maxKm: 999, minSamples: 3 },
-    Z3: { cutoff: d3m,          fallback: d2y,          maxDplus: 12, maxKm: 15,  minSamples: 3 },
-    Z4: { cutoff: '2022-01-01', fallback: '2018-01-01', maxDplus: 10, maxKm: 12,  minSamples: 2 },
-    Z5: { cutoff: '2022-01-01', fallback: '2018-01-01', maxDplus: 10, maxKm: 10,  minSamples: 2 },
+    Z1: { cutoff: d3m, fallback: d2y,          maxDplus: 12, maxKm: 999, minSamples: 3 },
+    Z2: { cutoff: d3m, fallback: d2y,          maxDplus: 12, maxKm: 999, minSamples: 3 },
+    Z3: { cutoff: d3m, fallback: d2y,          maxDplus: 12, maxKm: 15,  minSamples: 3 },
+    Z4: { cutoff: d3m, fallback: '2018-01-01', maxDplus: 10, maxKm: 12,  minSamples: 2 },
+    Z5: { cutoff: d3m, fallback: '2018-01-01', maxDplus: 10, maxKm: 10,  minSamples: 2 },
   };
 
   function getPacesFrom(z, fromDate) {
@@ -171,6 +171,35 @@ router.get('/pace-zones', (req, res) => {
     return paces;
   }
 
+  // ── Linear regression on well-sampled zones to extrapolate Z4/Z5 ──
+  // Model: pace_p10 = a + b * hr_median  (uses fastest 10% of paces per zone)
+  // Anchored on Z1-Z3 (sufficient samples); applied when zone has < minSamples data
+  function buildRegression() {
+    const anchors = [];
+    for (const z of ['Z1', 'Z2', 'Z3']) {
+      const cfg = zoneCfg[z];
+      let paces = getPacesFrom(z, cfg.cutoff);
+      if (paces.length < cfg.minSamples) paces = getPacesFrom(z, d2y);
+      if (paces.length < 2) continue;
+      paces.sort((a, b) => a - b);
+      const p10 = paces[Math.max(0, Math.floor(paces.length * 0.1))];
+      const [lo, hi] = zones[z];
+      const hrMid = (lo + hi) / 2;
+      anchors.push({ hr: hrMid, pace: p10 });
+    }
+    if (anchors.length < 2) return null;
+    const n = anchors.length;
+    const sumX  = anchors.reduce((s, p) => s + p.hr,       0);
+    const sumY  = anchors.reduce((s, p) => s + p.pace,     0);
+    const sumXY = anchors.reduce((s, p) => s + p.hr * p.pace, 0);
+    const sumX2 = anchors.reduce((s, p) => s + p.hr * p.hr,  0);
+    const b = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+    const a = (sumY - b * sumX) / n;
+    return { a, b }; // pace(hr) = a + b*hr  (b < 0: faster at higher HR)
+  }
+
+  const reg = buildRegression();
+
   const result = {};
   for (const z of zoneKeys) {
     const [bpmMin, bpmMax] = zones[z];
@@ -179,14 +208,21 @@ router.get('/pace-zones', (req, res) => {
     let paceSource = 'recent';
     if (paces.length < cfg.minSamples) {
       paces = getPacesFrom(z, cfg.fallback);
-      paceSource = 'historical';
+      paceSource = paces.length >= cfg.minSamples ? 'historical' : 'extrapolated';
     }
-    paces.sort((a, b) => a - b);
+
     let pace_min = null, pace_max = null;
-    if (paces.length >= 2) {
+
+    if (paceSource === 'extrapolated' && reg) {
+      // Extrapolate: faster end = reg(bpmMax), slower end = reg(bpmMin)
+      pace_min = Math.round((reg.a + reg.b * bpmMax) * 10) / 10; // fastest (high HR = fast)
+      pace_max = Math.round((reg.a + reg.b * bpmMin) * 10) / 10; // slowest
+    } else if (paces.length >= 2) {
+      paces.sort((a, b) => a - b);
       pace_min = Math.round(paces[Math.max(0, Math.floor(paces.length * 0.1))] * 10) / 10;
       pace_max = Math.round(paces[Math.min(paces.length - 1, Math.floor(paces.length * 0.9))] * 10) / 10;
     }
+
     result[z] = { bpm_min: bpmMin, bpm_max: bpmMax, pace_min, pace_max, samples: paces.length, pace_source: paceSource };
   }
 

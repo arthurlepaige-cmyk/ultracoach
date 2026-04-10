@@ -204,9 +204,6 @@ export default function ZoneSchematic() {
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-semibold text-gray-200">{meta.label}</p>
                         <p className="text-xs text-gray-500">{meta.desc}</p>
-                        {zd?.pace_source === 'historical' && (
-                          <p className="text-xs text-gray-700 italic">allure : données historiques</p>
-                        )}
                       </div>
                       <div className="text-right shrink-0 space-y-0.5 min-w-[110px]">
                         {zd && (
@@ -217,9 +214,18 @@ export default function ZoneSchematic() {
                         {hasPace ? (
                           <p className="text-xs font-mono text-gray-500">
                             🏃 {fmtPace(zd.pace_min)}–{fmtPace(zd.pace_max)} /km
+                            {zd.pace_source === 'extrapolated' && (
+                              <span className="text-gray-700 ml-1">~</span>
+                            )}
                           </p>
                         ) : (
-                          <p className="text-xs text-gray-700 italic">pas assez de données</p>
+                          <p className="text-xs text-gray-700 italic">—</p>
+                        )}
+                        {zd?.pace_source === 'extrapolated' && (
+                          <p className="text-xs text-gray-700 italic">extrapolé</p>
+                        )}
+                        {zd?.pace_source === 'historical' && (
+                          <p className="text-xs text-gray-700 italic">historique</p>
                         )}
                       </div>
                     </div>
@@ -231,7 +237,7 @@ export default function ZoneSchematic() {
               <div className="flex items-start gap-2 p-2.5 rounded-lg bg-dark-700/50">
                 <Info size={11} className="text-gray-600 mt-0.5 shrink-0" />
                 <p className="text-xs text-gray-600 leading-relaxed">
-                  FC et allures calibrées depuis tes 3 derniers mois (correction ITRA : 100m D+ ≡ 1km plat).
+                  Z1–Z3 calibrées sur tes 3 derniers mois. Z4–Z5 extrapolées par régression linéaire (modèle allure/FC, ancré sur Z1–Z3).
                   En trail avec D+, pilote à la <span className="text-gray-400 font-medium">FC</span> — laisse l'allure venir naturellement.
                 </p>
               </div>
