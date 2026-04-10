@@ -5,6 +5,7 @@ import { api } from '../api'
 import { format, parseISO, startOfMonth, endOfMonth, eachDayOfInterval, getDay, addMonths, subMonths } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import BodyDiagram from '../components/BodyDiagram'
+import ActivityElevation from '../components/ActivityElevation'
 
 // Stair height constant (standard step ≈ 18cm)
 const STAIR_HEIGHT_M = 0.18
@@ -378,6 +379,8 @@ export default function DailyLog() {
   const [recoverySuggestions, setRecoverySuggestions] = useState(null)
   const [recentLogs, setRecentLogs] = useState([])
   const [nextRace, setNextRace] = useState(null)
+  const [activityGpx, setActivityGpx] = useState(null)
+  const [garminHealth, setGarminHealth] = useState(null) // { body_battery_morning, body_battery_evening, stress_avg }
 
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }))
 
@@ -459,6 +462,22 @@ export default function DailyLog() {
           }
         }).catch(() => {})
       })
+  }, [form.date])
+
+  // Charge GPX + body battery quand la date change
+  useEffect(() => {
+    setActivityGpx(null)
+    setGarminHealth(null)
+    api.getActivityGpx(form.date).then(setActivityGpx).catch(() => {})
+    api.getDailyLog(form.date).then(entry => {
+      if (entry?.body_battery_morning || entry?.stress_avg) {
+        setGarminHealth({
+          body_battery_morning: entry.body_battery_morning,
+          body_battery_evening: entry.body_battery_evening,
+          stress_avg: entry.stress_avg,
+        })
+      }
+    }).catch(() => {})
   }, [form.date])
 
   // Temperature auto-fetch via geolocation + Open-Meteo (free, no API key)
@@ -723,6 +742,40 @@ export default function DailyLog() {
             </div>
           </div>
         </div>
+
+        {/* Body Battery + Stress (Garmin sync, read-only) */}
+        {garminHealth && (garminHealth.body_battery_morning || garminHealth.stress_avg) && (
+          <div className="card space-y-3">
+            <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-1.5">
+              ⌚ <span>Garmin</span>
+              <span className="text-xs font-normal text-gray-500 ml-1">sync automatique</span>
+            </h3>
+            <div className="grid grid-cols-3 gap-3">
+              {garminHealth.body_battery_morning != null && (
+                <div className="p-2 rounded-lg bg-dark-700 text-center">
+                  <div className="text-lg font-black" style={{ color: garminHealth.body_battery_morning >= 60 ? '#1D9E75' : garminHealth.body_battery_morning >= 30 ? '#EF9F27' : '#E24B4A' }}>
+                    {garminHealth.body_battery_morning}
+                  </div>
+                  <div className="text-xs text-gray-400">Body Battery matin</div>
+                </div>
+              )}
+              {garminHealth.body_battery_evening != null && (
+                <div className="p-2 rounded-lg bg-dark-700 text-center">
+                  <div className="text-lg font-black text-gray-300">{garminHealth.body_battery_evening}</div>
+                  <div className="text-xs text-gray-400">Body Battery soir</div>
+                </div>
+              )}
+              {garminHealth.stress_avg != null && (
+                <div className="p-2 rounded-lg bg-dark-700 text-center">
+                  <div className="text-lg font-black" style={{ color: garminHealth.stress_avg <= 25 ? '#1D9E75' : garminHealth.stress_avg <= 50 ? '#EF9F27' : '#E24B4A' }}>
+                    {garminHealth.stress_avg}
+                  </div>
+                  <div className="text-xs text-gray-400">Stress moyen</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Sleep */}
         <div className="card space-y-4">
@@ -1132,6 +1185,13 @@ export default function DailyLog() {
           </button>
         </div>
         </form>
+        )}
+
+        {/* GPX elevation profile */}
+        {activityGpx && activeTab === 'training' && (
+          <div className="card mt-4">
+            <ActivityElevation data={activityGpx} />
+          </div>
         )}
       </div>
 

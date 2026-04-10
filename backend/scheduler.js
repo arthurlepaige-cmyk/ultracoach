@@ -102,12 +102,16 @@ function initScheduler() {
     generateWeekMenus('auto-samedi').catch(e => console.error('[scheduler] Erreur fatale:', e.message));
   }, { timezone: 'Europe/Brussels' });
 
-  // Tous les jours à 06h00 — sync Garmin pour tous les utilisateurs configurés
-  cron.schedule('0 6 * * *', () => {
-    syncAllUsers().catch(e => console.error('[scheduler:sync] Erreur:', e.message));
+  // Sync Garmin — 9h00 (données nuit + matin) et 23h00 (données journée + entraînement)
+  cron.schedule('0 9 * * *', () => {
+    syncAllUsers().catch(e => console.error('[scheduler:sync:9h] Erreur:', e.message));
   }, { timezone: 'Europe/Brussels' });
 
-  console.log('[scheduler] Actif — nutrition sam. 20h00, sync Garmin tous les jours 06h00 (Europe/Brussels)');
+  cron.schedule('0 23 * * *', () => {
+    syncAllUsers().catch(e => console.error('[scheduler:sync:23h] Erreur:', e.message));
+  }, { timezone: 'Europe/Brussels' });
+
+  console.log('[scheduler] Actif — nutrition sam. 20h00, sync Garmin 9h00 + 23h00 (Europe/Brussels)');
 
   // Rattrapage au démarrage si la génération du samedi a été manquée
   setTimeout(() => {

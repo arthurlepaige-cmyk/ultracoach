@@ -135,6 +135,10 @@ function initSchema(db) {
     ["rpe", "INTEGER"],
     ["pain_zones", "TEXT"],
     ["shoe_id", "INTEGER"],
+    ["body_battery_morning", "INTEGER"],
+    ["body_battery_evening", "INTEGER"],
+    ["stress_avg", "INTEGER"],
+    ["gpx_garmin_id", "TEXT"],
   ];
   for (const [col, def] of logNewCols) {
     if (!logCols.includes(col)) db.exec(`ALTER TABLE daily_logs ADD COLUMN ${col} ${def}`);

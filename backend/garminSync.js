@@ -52,6 +52,11 @@ function getTokensPath(userId) {
   return path.join(getUserDataDir(userId), 'garmin_tokens.json');
 }
 
+function getGpxDir(userId) {
+  const { getUserDataDir } = require('./db');
+  return path.join(getUserDataDir(userId), 'gpx');
+}
+
 async function initConnection(userId, username, password) {
   const tokensPath = getTokensPath(userId);
   const result = await runPython(['init', username, password, tokensPath], 120000);
@@ -87,7 +92,8 @@ async function syncGarmin(userId) {
       : 90;
     const days = Math.min(Math.max(lastSync + 1, 3), 90);
 
-    const result = await runPython(['sync', tokensPath, dataPath, dbPath, String(days)], 180000);
+    const gpxDir = getGpxDir(userId);
+    const result = await runPython(['sync', tokensPath, dataPath, dbPath, gpxDir, String(days)], 180000);
 
     if (result.ok) {
       try { require('./dataLoader').clearCache(); } catch {}
@@ -99,4 +105,4 @@ async function syncGarmin(userId) {
   });
 }
 
-module.exports = { syncGarmin, initConnection, completeMfa, testConnection, encryptPassword, decryptPassword };
+module.exports = { syncGarmin, initConnection, completeMfa, testConnection, encryptPassword, decryptPassword, getGpxDir };

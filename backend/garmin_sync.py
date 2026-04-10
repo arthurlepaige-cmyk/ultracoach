@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """
 Garmin Connect sync script for UltraCoach.
-Usage:
-  python3 garmin_sync.py init EMAIL PASSWORD TOKENS_PATH
-  python3 garmin_sync.py mfa MFA_CODE TOKENS_PATH
-  python3 garmin_sync.py sync TOKENS_PATH DATA_PATH DB_PATH DAYS
-  python3 garmin_sync.py test TOKENS_PATH
-
-All commands output a single JSON line to stdout.
+Commands:
+  init EMAIL PASSWORD TOKENS_PATH
+  mfa MFA_CODE TOKENS_PATH
+  test TOKENS_PATH
+  sync TOKENS_PATH DATA_PATH DB_PATH GPX_DIR DAYS
 """
 
 import sys
@@ -15,6 +13,7 @@ import json
 import os
 import traceback
 from datetime import date, timedelta, datetime
+from math import radians, cos, sin, sqrt, atan2
 
 def out(obj):
     print(json.dumps(obj), flush=True)
@@ -24,13 +23,57 @@ def load_api(tokens_path):
     api = Garmin()
     with open(tokens_path, 'r') as f:
         api.garth.loads(f.read())
-    api.display_name = None
     return api
 
 def save_tokens(api, tokens_path):
     os.makedirs(os.path.dirname(tokens_path), exist_ok=True)
     with open(tokens_path, 'w') as f:
         f.write(api.garth.dumps())
+
+# ── Haversine distance ──────────────────────────────────────────────────────
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371000
+    p = radians
+    dlat = p(lat2 - lat1)
+    dlon = p(lon2 - lon1)
+    a = sin(dlat/2)**2 + cos(p(lat1)) * cos(p(lat2)) * sin(dlon/2)**2
+    return R * 2 * atan2(sqrt(a), sqrt(1 - a))
+
+# ── Parse GPX bytes → elevation profile ────────────────────────────────────
+def parse_gpx(gpx_bytes):
+    import xml.etree.ElementTree as ET
+    ns = {'gpx': 'http://www.topografix.com/GPX/1/1'}
+    root = ET.fromstring(gpx_bytes if isinstance(gpx_bytes, str) else gpx_bytes.decode('utf-8', errors='replace'))
+    points = []
+    dist = 0.0
+    prev = None
+    for trkpt in root.findall('.//gpx:trkpt', ns):
+        lat = float(trkpt.get('lat', 0))
+        lon = float(trkpt.get('lon', 0))
+        ele_el = trkpt.find('gpx:ele', ns)
+        ele = float(ele_el.text) if ele_el is not None else 0
+        if prev:
+            dist += haversine(prev[0], prev[1], lat, lon)
+        points.append({'d': round(dist / 1000, 3), 'e': round(ele, 1)})
+        prev = (lat, lon)
+    if not points:
+        return None
+    # Calcule D+ et D-
+    dplus = dminus = 0
+    for i in range(1, len(points)):
+        diff = points[i]['e'] - points[i-1]['e']
+        if diff > 0: dplus += diff
+        else: dminus += abs(diff)
+    return {
+        'points': points,
+        'stats': {
+            'dist_km': round(dist / 1000, 2),
+            'dplus': round(dplus),
+            'dminus': round(dminus),
+        }
+    }
+
+# ── Commandes ───────────────────────────────────────────────────────────────
 
 def cmd_init(email, password, tokens_path):
     from garminconnect import Garmin, GarminConnectAuthenticationError
@@ -41,8 +84,7 @@ def cmd_init(email, password, tokens_path):
         out({"ok": True, "need_mfa": False})
     except GarminConnectAuthenticationError as e:
         msg = str(e)
-        if "MFA" in msg or "NEEDS_MFA" in msg or "2FA" in msg:
-            # Garmin sent a code to user's email — save partial session
+        if "MFA" in msg or "NEEDS_MFA" in msg or "2FA" in msg or "NeedsMFAToken" in msg:
             state_path = tokens_path + ".mfa_state"
             os.makedirs(os.path.dirname(state_path), exist_ok=True)
             with open(state_path, 'w') as f:
@@ -73,12 +115,16 @@ def cmd_mfa(mfa_code, tokens_path):
 def cmd_test(tokens_path):
     try:
         api = load_api(tokens_path)
-        profile = api.get_full_name() or api.get_user_profile().get("displayName", "?")
-        out({"ok": True, "name": profile})
+        try:
+            name = api.get_full_name()
+        except:
+            profile = api.get_user_profile()
+            name = profile.get("displayName") or profile.get("userName") or "?"
+        out({"ok": True, "name": name})
     except Exception as e:
         out({"ok": False, "error": str(e)})
 
-def cmd_sync(tokens_path, data_path, db_path, days):
+def cmd_sync(tokens_path, data_path, db_path, gpx_dir, days):
     import sqlite3
 
     RUNNING_TYPES = {
@@ -90,28 +136,44 @@ def cmd_sync(tokens_path, data_path, db_path, days):
         api = load_api(tokens_path)
         days = int(days)
         since = date.today() - timedelta(days=days)
+        os.makedirs(gpx_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(data_path), exist_ok=True)
 
-        # ── Activités ──────────────────────────────────────────────────────────
+        # ── Activités + GPX ────────────────────────────────────────────────
         saved_activities = 0
+        gpx_index = {}  # date → garmin_id
+
+        # Charge l'index GPX existant
+        gpx_index_path = os.path.join(gpx_dir, 'index.json')
+        if os.path.exists(gpx_index_path):
+            with open(gpx_index_path) as f:
+                gpx_index = json.load(f)
+
         try:
-            activities = api.get_activities_by_date(since.isoformat(), date.today().isoformat(), "running")
-            activities += api.get_activities_by_date(since.isoformat(), date.today().isoformat(), "trail_running")
+            raw = []
+            for type_key in ["running", "trail_running"]:
+                try:
+                    raw += api.get_activities_by_date(since.isoformat(), date.today().isoformat(), type_key)
+                except:
+                    pass
 
             # Charge le JSON existant
             existing_data = {"activities": [], "athlete": {}, "garmin_runs": [], "atl_ctl": [],
                              "endurance_score": [], "hill_score": [], "targets": [], "races": [], "insights": {}}
             if os.path.exists(data_path):
                 with open(data_path, 'r') as f:
-                    raw = f.read().replace("NaN", "null")
-                    existing_data = json.loads(raw)
+                    content = f.read().replace("NaN", "null")
+                    existing_data = json.loads(content)
 
             existing_ids = set(str(a.get("garmin_id")) for a in existing_data["activities"] if a.get("garmin_id"))
             existing_keys = set(f"{a.get('Date','')[:10]}_{a.get('Distance_km')}" for a in existing_data["activities"])
 
             to_add = []
-            for act in activities:
-                type_key = (act.get("activityType", {}).get("typeKey") or "").lower()
-                if type_key not in RUNNING_TYPES:
+            new_gpx_activity_ids = []  # (date_str, garmin_id) à télécharger
+
+            for act in raw:
+                type_k = (act.get("activityType", {}).get("typeKey") or "").lower()
+                if type_k not in RUNNING_TYPES:
                     continue
                 act_id = str(act.get("activityId", ""))
                 dist_km = round((act.get("distance") or 0) / 1000, 2)
@@ -119,12 +181,15 @@ def cmd_sync(tokens_path, data_path, db_path, days):
                 date_str = (act.get("startTimeLocal") or "").replace("T", " ")[:19]
                 d = datetime.fromisoformat(date_str) if date_str else datetime.now()
                 dplus = round(act.get("elevationGain") or 0)
-                is_treadmill = type_key in ("indoor_running", "treadmill_running") or \
+                is_treadmill = type_k in ("indoor_running", "treadmill_running") or \
                     "tapis" in (act.get("activityName") or "").lower() or \
                     "treadmill" in (act.get("activityName") or "").lower()
 
                 key = f"{date_str[:10]}_{dist_km}"
                 if act_id and act_id in existing_ids:
+                    # Activité existante — vérifie si GPX manque
+                    if act_id and not os.path.exists(os.path.join(gpx_dir, f"{act_id}.json")):
+                        new_gpx_activity_ids.append((date_str[:10], act_id))
                     continue
                 if key in existing_keys:
                     continue
@@ -149,20 +214,42 @@ def cmd_sync(tokens_path, data_path, db_path, days):
                 to_add.append(converted)
                 existing_ids.add(act_id)
                 existing_keys.add(key)
+                if act_id and not is_treadmill:
+                    new_gpx_activity_ids.append((date_str[:10], act_id))
 
             if to_add:
                 existing_data["activities"] = sorted(
                     existing_data["activities"] + to_add,
                     key=lambda a: a.get("Date", "")
                 )
-                os.makedirs(os.path.dirname(data_path), exist_ok=True)
                 with open(data_path, 'w') as f:
                     json.dump(existing_data, f, indent=2)
                 saved_activities = len(to_add)
-        except Exception as e:
-            pass  # Log silently, continue to health sync
 
-        # ── Données santé ──────────────────────────────────────────────────────
+            # Télécharge les GPX (max 10 par sync pour ne pas surcharger)
+            for date_str, act_id in new_gpx_activity_ids[:10]:
+                try:
+                    gpx_path = os.path.join(gpx_dir, f"{act_id}.json")
+                    if os.path.exists(gpx_path):
+                        continue
+                    gpx_bytes = api.download_activity(int(act_id), dl_fmt=4)  # 4 = GPX
+                    if gpx_bytes:
+                        parsed = parse_gpx(gpx_bytes)
+                        if parsed:
+                            with open(gpx_path, 'w') as f:
+                                json.dump(parsed, f)
+                            gpx_index[date_str] = act_id
+                except Exception:
+                    pass
+
+            # Sauvegarde l'index GPX
+            with open(gpx_index_path, 'w') as f:
+                json.dump(gpx_index, f)
+
+        except Exception as e:
+            pass  # Continue vers la sync santé
+
+        # ── Données santé ──────────────────────────────────────────────────
         saved_health = 0
         conn = sqlite3.connect(db_path)
         cur = conn.cursor()
@@ -172,49 +259,81 @@ def cmd_sync(tokens_path, data_path, db_path, days):
             ds = d.isoformat()
 
             resting_hr = hrv = sleep_h = sleep_quality = None
+            body_battery_morning = body_battery_evening = stress_avg = None
+            gpx_garmin_id = gpx_index.get(ds)
 
+            # FC repos
             try:
                 hr_data = api.get_heart_rates(ds)
                 resting_hr = hr_data.get("restingHeartRate")
-            except Exception:
-                pass
+            except: pass
 
+            # HRV
             try:
                 hrv_data = api.get_hrv_data(ds)
-                hrv_val = (hrv_data.get("hrvSummary") or {}).get("lastNight")
-                if hrv_val:
-                    hrv = round(hrv_val)
-            except Exception:
-                pass
+                v = (hrv_data.get("hrvSummary") or {}).get("lastNight")
+                if v: hrv = round(v)
+            except: pass
 
+            # Sommeil
             try:
                 sleep_data = api.get_sleep_data(ds)
-                dto = (sleep_data.get("dailySleepDTO") or {})
+                dto = sleep_data.get("dailySleepDTO") or {}
                 secs = dto.get("sleepTimeSeconds")
-                if secs:
-                    sleep_h = round(secs / 3600, 1)
+                if secs: sleep_h = round(secs / 3600, 1)
                 score = (dto.get("sleepScores") or {}).get("overall", {})
-                if isinstance(score, dict):
-                    v = score.get("value")
-                    if v is not None:
-                        sleep_quality = max(1, min(5, round(v / 20)))
-            except Exception:
-                pass
+                if isinstance(score, dict) and score.get("value") is not None:
+                    sleep_quality = max(1, min(5, round(score["value"] / 20)))
+            except: pass
 
-            if resting_hr or hrv or sleep_h:
-                cur.execute("SELECT id, fc_repos, hrv, sleep_h FROM daily_logs WHERE date = ?", (ds,))
+            # Body Battery
+            try:
+                bb_data = api.get_body_battery(ds)
+                if bb_data and isinstance(bb_data, list) and len(bb_data) > 0:
+                    values = [v["bodyBatteryLevel"] for v in bb_data[0].get("bodyBatteryValuesArray", []) if v.get("bodyBatteryLevel") is not None]
+                    if values:
+                        body_battery_morning = values[0]   # Valeur au réveil
+                        body_battery_evening = values[-1]  # Valeur du soir
+            except: pass
+
+            # Stress moyen
+            try:
+                stress_data = api.get_stress_data(ds)
+                avg = stress_data.get("avgStressLevel")
+                if avg and avg > 0: stress_avg = avg
+            except: pass
+
+            if any(v is not None for v in [resting_hr, hrv, sleep_h, body_battery_morning, stress_avg, gpx_garmin_id]):
+                cur.execute("SELECT id, fc_repos, hrv, sleep_h, body_battery_morning FROM daily_logs WHERE date = ?", (ds,))
                 row = cur.fetchone()
+
+                def coalesce_update(col, new_val, existing):
+                    return new_val if (new_val is not None and existing is None) else None
+
                 if row:
                     cur.execute("""UPDATE daily_logs SET
                         fc_repos = CASE WHEN fc_repos IS NULL AND ? IS NOT NULL THEN ? ELSE fc_repos END,
                         hrv = CASE WHEN hrv IS NULL AND ? IS NOT NULL THEN ? ELSE hrv END,
                         sleep_h = CASE WHEN sleep_h IS NULL AND ? IS NOT NULL THEN ? ELSE sleep_h END,
-                        sleep_quality = CASE WHEN sleep_quality IS NULL AND ? IS NOT NULL THEN ? ELSE sleep_quality END
+                        sleep_quality = CASE WHEN sleep_quality IS NULL AND ? IS NOT NULL THEN ? ELSE sleep_quality END,
+                        body_battery_morning = CASE WHEN body_battery_morning IS NULL AND ? IS NOT NULL THEN ? ELSE body_battery_morning END,
+                        body_battery_evening = CASE WHEN body_battery_evening IS NULL AND ? IS NOT NULL THEN ? ELSE body_battery_evening END,
+                        stress_avg = CASE WHEN stress_avg IS NULL AND ? IS NOT NULL THEN ? ELSE stress_avg END,
+                        gpx_garmin_id = CASE WHEN gpx_garmin_id IS NULL AND ? IS NOT NULL THEN ? ELSE gpx_garmin_id END
                         WHERE date = ?""",
-                        (resting_hr, resting_hr, hrv, hrv, sleep_h, sleep_h, sleep_quality, sleep_quality, ds))
+                        (resting_hr, resting_hr, hrv, hrv, sleep_h, sleep_h,
+                         sleep_quality, sleep_quality,
+                         body_battery_morning, body_battery_morning,
+                         body_battery_evening, body_battery_evening,
+                         stress_avg, stress_avg,
+                         gpx_garmin_id, gpx_garmin_id, ds))
                 else:
-                    cur.execute("INSERT OR IGNORE INTO daily_logs (date, fc_repos, hrv, sleep_h, sleep_quality) VALUES (?, ?, ?, ?, ?)",
-                        (ds, resting_hr, hrv, sleep_h, sleep_quality))
+                    cur.execute("""INSERT OR IGNORE INTO daily_logs
+                        (date, fc_repos, hrv, sleep_h, sleep_quality,
+                         body_battery_morning, body_battery_evening, stress_avg, gpx_garmin_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (ds, resting_hr, hrv, sleep_h, sleep_quality,
+                         body_battery_morning, body_battery_evening, stress_avg, gpx_garmin_id))
                 saved_health += 1
 
         conn.commit()
@@ -235,7 +354,7 @@ if __name__ == "__main__":
         elif cmd == "test":
             cmd_test(sys.argv[2])
         elif cmd == "sync":
-            cmd_sync(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+            cmd_sync(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6])
         else:
             out({"ok": False, "error": f"Unknown command: {cmd}"})
     except Exception as e:

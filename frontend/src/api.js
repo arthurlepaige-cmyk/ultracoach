@@ -157,6 +157,7 @@ export const api = {
   completeGarminMfa: (mfa_code, username, password) => post('/sync/garmin/mfa', { mfa_code, username, password }),
   deleteGarminConfig: () => del('/sync/garmin/config'),
   runGarminSync: () => post('/sync/garmin/run', {}),
+  getActivityGpx: (date) => get(`/sync/gpx/${date}`),
 
   // Import / premier démarrage
   getImportStatus: () => get('/import/status'),

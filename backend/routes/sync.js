@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const { syncGarmin, initConnection, completeMfa, testConnection, encryptPassword } = require('../garminSync');
+const fs = require('fs');
+const path = require('path');
+const { syncGarmin, initConnection, completeMfa, testConnection, encryptPassword, getGpxDir } = require('../garminSync');
 const { getDb } = require('../db');
 const { runWithUser } = require('../userContext');
 
@@ -86,15 +88,30 @@ router.post('/garmin/run', async (req, res) => {
   }
 });
 
+// GET /api/sync/gpx/:date — retourne le profil altimétrique pour une date
+router.get('/gpx/:date', (req, res) => {
+  const { date } = req.params;
+  runWithUser(req.user.id, () => {
+    const db = getDb();
+    const log = db.prepare('SELECT gpx_garmin_id FROM daily_logs WHERE date = ?').get(date);
+    if (!log?.gpx_garmin_id) return res.status(404).json({ error: 'Pas de GPX pour cette date' });
+
+    const gpxPath = path.join(getGpxDir(req.user.id), `${log.gpx_garmin_id}.json`);
+    if (!fs.existsSync(gpxPath)) return res.status(404).json({ error: 'Fichier GPX non disponible' });
+
+    const data = JSON.parse(fs.readFileSync(gpxPath, 'utf8'));
+    res.json(data);
+  });
+});
+
 // DELETE /api/sync/garmin/config — supprimer
 router.delete('/garmin/config', (req, res) => {
-  const fs = require('fs');
   runWithUser(req.user.id, () => {
     const db = getDb();
     db.prepare('DELETE FROM sync_config WHERE provider = ?').run('garmin');
     // Supprime aussi les tokens
     const { getUserDataDir } = require('../db');
-    const tokensPath = require('path').join(getUserDataDir(req.user.id), 'garmin_tokens.json');
+    const tokensPath = path.join(getUserDataDir(req.user.id), 'garmin_tokens.json');
     try { fs.unlinkSync(tokensPath); } catch {}
     try { fs.unlinkSync(tokensPath + '.mfa_state'); } catch {}
     res.json({ ok: true });
