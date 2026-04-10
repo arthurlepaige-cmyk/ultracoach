@@ -1,8 +1,18 @@
 const BASE = '/api'
 
+async function handleError(res, url) {
+  try {
+    const data = await res.json()
+    if (data.error) throw new Error(data.error)
+  } catch (e) {
+    if (e.message !== `API error ${res.status}: ${url}`) throw e
+  }
+  throw new Error(`API error ${res.status}: ${url}`)
+}
+
 async function get(url) {
   const res = await fetch(BASE + url, { credentials: 'include' })
-  if (!res.ok) throw new Error(`API error ${res.status}: ${url}`)
+  if (!res.ok) await handleError(res, url)
   return res.json()
 }
 
@@ -13,7 +23,7 @@ async function post(url, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   })
-  if (!res.ok) throw new Error(`API error ${res.status}: ${url}`)
+  if (!res.ok) await handleError(res, url)
   return res.json()
 }
 
