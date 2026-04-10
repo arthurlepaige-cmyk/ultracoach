@@ -112,6 +112,24 @@ router.get('/export', requireAuth, (req, res) => {
   });
 });
 
+// ── PUT /api/auth/password — changement de mot de passe ─────────────────────
+router.put('/password', requireAuth, async (req, res) => {
+  const { current_password, new_password } = req.body;
+  if (!current_password || !new_password) return res.status(400).json({ error: 'Champs requis' });
+  if (new_password.length < 8) return res.status(400).json({ error: 'Nouveau mot de passe trop court (8 caractères minimum)' });
+
+  const authDb = getAuthDb();
+  const user = authDb.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+
+  const valid = await bcrypt.compare(current_password, user.password_hash);
+  if (!valid) return res.status(401).json({ error: 'Mot de passe actuel incorrect' });
+
+  const new_hash = await bcrypt.hash(new_password, 12);
+  authDb.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(new_hash, req.user.id);
+  res.json({ ok: true });
+});
+
 // ── DELETE /api/auth/account — suppression compte + données (GDPR) ────────────
 router.delete('/account', requireAuth, async (req, res) => {
   const { password } = req.body;

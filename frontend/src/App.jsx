@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
-import { LayoutDashboard, Calendar, Map, BarChart2, ClipboardList, Sun, Moon, Mountain, Settings, Utensils, LogOut, User } from 'lucide-react'
+import { LayoutDashboard, Calendar, Map, BarChart2, ClipboardList, Sun, Moon, Mountain, Settings, Utensils, LogOut, User, KeyRound, X } from 'lucide-react'
 import Dashboard from './pages/Dashboard'
 import Training from './pages/Training'
 import RaceStrategy from './pages/RaceStrategy'
@@ -21,11 +21,66 @@ const navItems = [
   { path: '/analytics', icon: BarChart2, label: 'Analyses' },
 ]
 
+function AccountPanel({ onClose }) {
+  const [form, setForm] = useState({ current: '', next: '', confirm: '' })
+  const [status, setStatus] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (form.next !== form.confirm) { setStatus({ ok: false, msg: 'Les mots de passe ne correspondent pas' }); return }
+    if (form.next.length < 8) { setStatus({ ok: false, msg: 'Minimum 8 caractères' }); return }
+    setLoading(true)
+    try {
+      await api.changePassword(form.current, form.next)
+      setStatus({ ok: true, msg: 'Mot de passe changé !' })
+      setForm({ current: '', next: '', confirm: '' })
+    } catch (e) {
+      setStatus({ ok: false, msg: e.message })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+      <div className="bg-dark-800 border border-dark-600 rounded-xl w-full max-w-sm p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold flex items-center gap-2"><KeyRound size={16} className="text-brand-green" />Changer le mot de passe</h3>
+          <button onClick={onClose} className="p-1 hover:bg-dark-600 rounded"><X size={16} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Mot de passe actuel</label>
+            <input type="password" className="input-field w-full" value={form.current} onChange={e => setForm(f => ({ ...f, current: e.target.value }))} required />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Nouveau mot de passe</label>
+            <input type="password" className="input-field w-full" placeholder="Minimum 8 caractères" value={form.next} onChange={e => setForm(f => ({ ...f, next: e.target.value }))} required />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Confirmer</label>
+            <input type="password" className="input-field w-full" value={form.confirm} onChange={e => setForm(f => ({ ...f, confirm: e.target.value }))} required />
+          </div>
+          {status && (
+            <p className={`text-xs px-3 py-2 rounded-lg ${status.ok ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300'}`}>{status.msg}</p>
+          )}
+          <div className="flex gap-2 pt-1">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Annuler</button>
+            <button type="submit" disabled={loading} className="btn-primary flex-1">{loading ? '...' : 'Changer'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 function AppContent() {
   const { user, logout } = useAuth()
   const [darkMode, setDarkMode] = useState(true)
   const [setupDone, setSetupDone] = useState(true)
   const [showSetup, setShowSetup] = useState(false)
+  const [showAccount, setShowAccount] = useState(false)
 
   useEffect(() => {
     if (!user) return
@@ -80,10 +135,10 @@ function AppContent() {
               </nav>
 
               <div className="flex items-center gap-1">
-                <span className="hidden md:flex items-center gap-1.5 text-xs text-gray-400 mr-1">
+                <button onClick={() => setShowAccount(true)} className="hidden md:flex items-center gap-1.5 text-xs text-gray-400 hover:text-white mr-1 px-2 py-1 rounded-lg hover:bg-dark-600 transition-colors">
                   <User size={13} />
                   {user.name}
-                </span>
+                </button>
                 <button
                   onClick={() => setShowSetup(true)}
                   className="p-2 rounded-lg hover:bg-dark-600 text-gray-400 hover:text-white transition-colors"
@@ -107,6 +162,8 @@ function AppContent() {
               </div>
             </div>
           </header>
+
+          {showAccount && <AccountPanel onClose={() => setShowAccount(false)} />}
 
           {/* Main content */}
           <main className="flex-1 max-w-7xl mx-auto w-full px-4 py-6">

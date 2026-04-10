@@ -150,6 +150,7 @@ export const api = {
   // Auth
   getMe: () => get('/auth/me'),
   getUsers: () => get('/auth/users'),
+  changePassword: (current_password, new_password) => put('/auth/password', { current_password, new_password }),
   deleteAccount: (password) => del('/auth/account', { password }),
   exportData: () => window.open('/api/auth/export', '_blank'),
 }
