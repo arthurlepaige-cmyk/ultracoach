@@ -132,7 +132,13 @@
       "Bash(grep -n \"callAI\\\\|ollama\\\\|anthropic\\\\|claude\" /Users/arthurlepaige/Desktop/UltraCoach/backend/routes/race.js | head -20 2>&1\ngrep -n \"callAI\\\\|ollama\\\\|anthropic\\\\|claude\" /Users/arthurlepaige/Desktop/UltraCoach/backend/routes/training.js | head -20 2>&1)",
       "Bash(node -e \"\nrequire\\('dotenv'\\).config\\(\\);\nconst { callAI, getAIStatus } = require\\('./ai'\\);\ngetAIStatus\\(\\).then\\(s => console.log\\('AI status:', JSON.stringify\\(s\\)\\)\\);\n\" 2>&1)",
       "Bash(node -e \"\nrequire\\('dotenv'\\).config\\(\\);\nconst { getAIStatus } = require\\('./ai'\\);\ngetAIStatus\\(\\).then\\(s => console.log\\('Provider actif:', s.active, '| Groq:', s.groq\\)\\);\n\" 2>&1)",
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git remote:*)",
+      "Bash(cd /Users/arthurlepaige/Desktop/UltraCoach/backend && node -e \"\nconst db = require\\('./db'\\).getAuthDb\\(\\);\n// Add source_user_id column if not exists\nconst cols = db.prepare\\('PRAGMA table_info\\(users\\)'\\).all\\(\\).map\\(c => c.name\\);\nif \\(!cols.includes\\('source_user_id'\\)\\) {\n  db.exec\\('ALTER TABLE users ADD COLUMN source_user_id TEXT'\\);\n  console.log\\('source_user_id ajouté'\\);\n}\nconst users = db.prepare\\('SELECT id, email, name FROM users'\\).all\\(\\);\nconsole.log\\('Utilisateurs:', users\\);\n\" 2>&1)",
+      "Bash(node scripts/migrate-to-multiuser.js --email camille.breuls@hotmail.com --name Camille --password ultracoach2026 2>&1)",
+      "Bash(node -e \"\nconst db = require\\('./db'\\).getAuthDb\\(\\);\ndb.prepare\\('UPDATE users SET source_user_id = ? WHERE email = ?'\\)\n  .run\\('acfb0309-d723-47b3-97c8-24f3e1382e48', 'camille.breuls@hotmail.com'\\);\nconsole.log\\('source_user_id configuré pour Camille'\\);\n\" 2>&1)",
+      "Bash(node -e \"\nrequire\\('dotenv'\\).config\\(\\);\nrequire\\('./routes/nutrition'\\);\nrequire\\('./scheduler'\\);\nconsole.log\\('OK — pas d erreur'\\);\n\" 2>&1)"
     ]
   }
 }

@@ -136,12 +136,9 @@ export const api = {
   getNutritionWeek: (from) => get(`/nutrition/week?from=${from}`),
   deleteMenu: (date) => del(`/nutrition/daily/${date}`),
   generateWeekMenus: (from) => post(`/nutrition/generate-week${from ? '?from=' + from : ''}`, {}),
-  // Gist sync
-  getGistConfig: () => get('/nutrition/gist/config'),
-  saveGistConfig: (data) => put('/nutrition/gist/config', data),
-  pushGist: (from) => post(`/nutrition/gist/push${from ? '?from=' + from : ''}`, {}),
-  pullGist: () => post('/nutrition/gist/pull', {}),
-  // Liste de courses
+  // Sync recettes depuis utilisateur source
+  syncFromSource: (from) => post(`/nutrition/sync-from-source${from ? '?from=' + from : ''}`, {}),
+  // Liste de courses commune
   getShoppingList: (from) => get(`/nutrition/shopping-list${from ? '?from=' + from : ''}`),
 
   // Import / premier démarrage

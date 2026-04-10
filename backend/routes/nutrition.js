@@ -360,131 +360,85 @@ router.post('/generate-week', async (req, res) => {
   }
 });
 
-// ── GET /api/nutrition/gist/config ───────────────────────────────────────────
-router.get('/gist/config', (req, res) => {
-  const db = getDb();
-  const s = db.prepare('SELECT gist_token, gist_id, gist_source_url, gist_last_push, gist_last_pull FROM nutrition_settings WHERE id = 1').get();
-  res.json(s || {});
-});
+// ── POST /api/nutrition/sync-from-source — synchronise les recettes de l'utilisateur source ──
+router.post('/sync-from-source', async (req, res) => {
+  const { getAuthDb, getUserDataDir } = require('../db');
+  const { runWithUser } = require('../userContext');
+  const Database = require('better-sqlite3');
+  const path = require('path');
 
-// ── PUT /api/nutrition/gist/config ───────────────────────────────────────────
-router.put('/gist/config', (req, res) => {
-  const db = getDb();
-  const { gist_token, gist_id, gist_source_url } = req.body;
-  db.prepare('UPDATE nutrition_settings SET gist_token=?, gist_id=?, gist_source_url=? WHERE id=1')
-    .run(gist_token || null, gist_id || null, gist_source_url || null);
-  res.json({ ok: true });
-});
+  const authDb = getAuthDb();
+  const me = authDb.prepare('SELECT source_user_id FROM users WHERE id = ?').get(req.user.id);
+  if (!me?.source_user_id) return res.status(400).json({ error: 'Aucun utilisateur source configuré pour ce compte' });
 
-// ── POST /api/nutrition/gist/push — pousse la semaine vers le Gist ────────────
-router.post('/gist/push', async (req, res) => {
-  const db = getDb();
-  const from = req.query.from;
-  const weekStart = from || (() => {
-    const d = new Date();
-    const day = d.getDay();
+  const sourceId = me.source_user_id;
+  const sourceDir = getUserDataDir(sourceId);
+  const sourceDbPath = path.join(sourceDir, 'ultracoach.db');
+
+  let sourceDb;
+  try { sourceDb = new Database(sourceDbPath, { readonly: true }); }
+  catch { return res.status(404).json({ error: 'Base de données source introuvable' }); }
+
+  const from = req.query.from || (() => {
+    const d = new Date(); const day = d.getDay();
     d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
     return d.toISOString().slice(0, 10);
   })();
 
-  const settings = db.prepare('SELECT * FROM nutrition_settings WHERE id = 1').get();
-  if (!settings?.gist_token) return res.status(400).json({ error: 'Token GitHub non configuré dans les paramètres' });
-
   const dates = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(weekStart); d.setDate(d.getDate() + i);
+    const d = new Date(from); d.setDate(d.getDate() + i);
     return d.toISOString().slice(0, 10);
   });
 
-  const menus = {};
+  const myDb = getDb();
+  const mySettings = myDb.prepare('SELECT * FROM nutrition_settings WHERE id = 1').get() || {};
+  const myBMR = computeBMR(mySettings.weight_kg || 60, mySettings.height_cm || 165, getAge(mySettings), mySettings.sex || 'F');
+
+  let imported = 0;
   for (const date of dates) {
-    const cached = db.prepare('SELECT * FROM nutrition_menus WHERE date = ?').get(date);
-    if (cached?.menu_json) {
-      menus[date] = {
-        session_summary: cached.session_summary,
-        needs: JSON.parse(cached.needs_json),
-        menu: JSON.parse(cached.menu_json),
-      };
+    const existing = myDb.prepare('SELECT date FROM nutrition_menus WHERE date = ?').get(date);
+    if (existing) continue;
+
+    const sourceMenu = sourceDb.prepare('SELECT * FROM nutrition_menus WHERE date = ?').get(date);
+    if (!sourceMenu?.menu_json) continue;
+
+    let sessions = [];
+    try { const pd = getSessionsForRange(date, date); sessions = pd?.[0]?.sessions || []; } catch {}
+    const log = myDb.prepare('SELECT * FROM daily_logs WHERE date = ?').get(date);
+    if (log?.distance_km) sessions = [{ type: log.session_type, distance: log.distance_km, dplus: log.dplus_m || 0, duration_min: log.duration_min }];
+
+    const session_kcal = sessions.reduce((sum, s) => sum + estimateSessionCalories(s, mySettings.weight_kg || 60), 0);
+    const nextRace = myDb.prepare("SELECT * FROM race_targets WHERE active=1 AND priority='A' AND date >= ? ORDER BY date ASC").get(date);
+    let phase = 'base';
+    if (nextRace) {
+      const diff = Math.round((new Date(nextRace.date) - new Date(date)) / 86400000);
+      if (diff <= 3) phase = 'course';
+      else if (diff <= 10) phase = 'affûtage';
+      else if (session_kcal > 800) phase = 'charge';
+      else if (!sessions.length && session_kcal < 200) phase = 'récup';
     }
+    const myNeeds = computeDailyNeeds(myBMR, session_kcal, phase);
+
+    myDb.prepare(`
+      INSERT OR IGNORE INTO nutrition_menus (date, session_summary, needs_json, menu_json, generated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(date, sourceMenu.session_summary, JSON.stringify(myNeeds), sourceMenu.menu_json);
+    imported++;
   }
 
-  if (Object.keys(menus).length === 0) {
-    return res.status(400).json({ error: 'Aucun menu généré pour cette semaine — génère d\'abord les menus' });
-  }
-
-  const bmr = computeBMR(settings.weight_kg, settings.height_cm, getAge(settings), settings.sex);
-  const content = {
-    generated_at: new Date().toISOString(),
-    week: weekStart,
-    author_bmr: bmr,
-    menus,
-  };
-
-  try {
-    const { pushToGist } = require('../gist');
-    const result = await pushToGist(settings.gist_token, settings.gist_id, content);
-    db.prepare('UPDATE nutrition_settings SET gist_id=?, gist_last_push=CURRENT_TIMESTAMP WHERE id=1').run(result.gist_id);
-    res.json({ ok: true, gist_id: result.gist_id, url: result.url, days: Object.keys(menus).length });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── POST /api/nutrition/gist/pull — tire les recettes depuis le Gist source ──
-router.post('/gist/pull', async (req, res) => {
-  const db = getDb();
-  const settings = db.prepare('SELECT * FROM nutrition_settings WHERE id = 1').get();
-  if (!settings?.gist_source_url) return res.status(400).json({ error: 'URL Gist source non configurée' });
-
-  try {
-    const { pullFromGist } = require('../gist');
-    const gistData = await pullFromGist(settings.gist_source_url);
-
-    const myBMR = computeBMR(settings.weight_kg, settings.height_cm, getAge(settings), settings.sex);
-    let imported = 0;
-
-    for (const [date, dayData] of Object.entries(gistData.menus || {})) {
-      // Ne pas écraser les menus déjà générés localement
-      const existing = db.prepare('SELECT date FROM nutrition_menus WHERE date = ?').get(date);
-      if (existing) continue;
-
-      // Recalcule les besoins selon la charge locale
-      let sessions = [];
-      try { const pd = getSessionsForRange(date, date); sessions = pd?.[0]?.sessions || []; } catch {}
-      const log = db.prepare('SELECT * FROM daily_logs WHERE date = ?').get(date);
-      if (log?.distance_km) sessions = [{ type: log.session_type, distance: log.distance_km, dplus: log.dplus_m || 0, duration_min: log.duration_min }];
-
-      const session_kcal = sessions.reduce((sum, s) => sum + estimateSessionCalories(s, settings.weight_kg), 0);
-      const nextRace = db.prepare("SELECT * FROM race_targets WHERE active=1 AND priority='A' AND date >= ? ORDER BY date ASC").get(date);
-      let phase = 'base';
-      if (nextRace) {
-        const diff = Math.round((new Date(nextRace.date) - new Date(date)) / 86400000);
-        if (diff <= 3) phase = 'course';
-        else if (diff <= 10) phase = 'affûtage';
-        else if (session_kcal > 800) phase = 'charge';
-        else if (!sessions.length && session_kcal < 200) phase = 'récup';
-      }
-      const myNeeds = computeDailyNeeds(myBMR, session_kcal, phase);
-
-      db.prepare(`
-        INSERT OR IGNORE INTO nutrition_menus (date, session_summary, needs_json, menu_json, generated_at)
-        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-      `).run(date, dayData.session_summary, JSON.stringify(myNeeds), JSON.stringify(dayData.menu));
-      imported++;
-    }
-
-    db.prepare('UPDATE nutrition_settings SET gist_last_pull=CURRENT_TIMESTAMP WHERE id=1').run();
-    res.json({ ok: true, imported, total: Object.keys(gistData.menus || {}).length, week: gistData.week });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  sourceDb.close();
+  res.json({ ok: true, imported, week: from });
 });
 
 // ── GET /api/nutrition/shopping-list?from=YYYY-MM-DD ─────────────────────────
+// Liste commune : combine les quantités de l'utilisateur courant + utilisateur source
 router.get('/shopping-list', (req, res) => {
-  const db = getDb();
+  const { getAuthDb, getUserDataDir } = require('../db');
+  const Database = require('better-sqlite3');
+  const path = require('path');
+
   const from = req.query.from || (() => {
-    const d = new Date();
-    const day = d.getDay();
+    const d = new Date(); const day = d.getDay();
     d.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
     return d.toISOString().slice(0, 10);
   })();
@@ -495,33 +449,77 @@ router.get('/shopping-list', (req, res) => {
   });
 
   const DAY_LABELS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
-  const ingredientMap = {}; // key: nom_lowercase → { nom, occurrences }
+  const ingredientMap = {};
 
-  const addIngredients = (ingredients, mealLabel, dayLabel) => {
+  // Fusionne les quantités numériques (ex: "200g" + "150g" → "350g")
+  function mergeQty(a, b) {
+    if (!a) return b || '';
+    if (!b) return a || '';
+    const numA = parseFloat(a); const numB = parseFloat(b);
+    if (!isNaN(numA) && !isNaN(numB)) {
+      const unit = a.replace(/[\d.]/g, '').trim();
+      return `${Math.round(numA + numB)}${unit}`;
+    }
+    return `${a} + ${b}`;
+  }
+
+  function addIngredients(ingredients, mealLabel, dayLabel, userId) {
     if (!Array.isArray(ingredients)) return;
     for (const ing of ingredients) {
       if (!ing?.nom) continue;
       const key = ing.nom.toLowerCase().trim();
       if (!ingredientMap[key]) ingredientMap[key] = { nom: ing.nom, occurrences: [] };
-      ingredientMap[key].occurrences.push({ quantite: ing.quantite || '', meal: mealLabel, day: dayLabel });
+      const existing = ingredientMap[key].occurrences.find(o => o.meal === mealLabel && o.day === dayLabel);
+      if (existing) {
+        existing.quantite = mergeQty(existing.quantite, ing.quantite || '');
+      } else {
+        ingredientMap[key].occurrences.push({ quantite: ing.quantite || '', meal: mealLabel, day: dayLabel });
+      }
     }
-  };
+  }
 
-  let days_with_menu = 0;
-  for (let i = 0; i < dates.length; i++) {
-    const cached = db.prepare('SELECT menu_json FROM nutrition_menus WHERE date = ?').get(dates[i]);
-    if (!cached?.menu_json) continue;
-    days_with_menu++;
-    let menu;
-    try { menu = JSON.parse(cached.menu_json); } catch { continue; }
-    const d = DAY_LABELS[i];
-    addIngredients(menu.petit_dejeuner?.ingredients, 'Matin', d);
-    addIngredients(menu.dejeuner?.option_pain_fromage?.ingredients, 'Midi', d);
-    addIngredients(menu.diner?.ingredients, 'Soir', d);
+  // Collecte les menus d'une DB
+  function collectFromDb(db) {
+    for (let i = 0; i < dates.length; i++) {
+      const cached = db.prepare('SELECT menu_json FROM nutrition_menus WHERE date = ?').get(dates[i]);
+      if (!cached?.menu_json) continue;
+      let menu; try { menu = JSON.parse(cached.menu_json); } catch { continue; }
+      const d = DAY_LABELS[i];
+      addIngredients(menu.petit_dejeuner?.ingredients, 'Matin', d);
+      addIngredients(menu.dejeuner?.option_pain_fromage?.ingredients, 'Midi', d);
+      addIngredients(menu.diner?.ingredients, 'Soir', d);
+    }
+  }
+
+  // 1. Menus de l'utilisateur courant
+  const myDb = getDb();
+  collectFromDb(myDb);
+
+  // 2. Menus de l'utilisateur source (si différent)
+  const authDb = getAuthDb();
+  const me = authDb.prepare('SELECT source_user_id FROM users WHERE id = ?').get(req.user.id);
+  if (me?.source_user_id && me.source_user_id !== req.user.id) {
+    try {
+      const sourceDbPath = path.join(getUserDataDir(me.source_user_id), 'ultracoach.db');
+      const sourceDb = new Database(sourceDbPath, { readonly: true });
+      collectFromDb(sourceDb);
+      sourceDb.close();
+    } catch { /* source non disponible */ }
+  }
+
+  // 3. Si c'est l'utilisateur source (Arthur), ajoute aussi les menus des utilisateurs qui le référencent
+  const paired = authDb.prepare('SELECT id FROM users WHERE source_user_id = ?').all(req.user.id);
+  for (const p of paired) {
+    try {
+      const pDbPath = path.join(getUserDataDir(p.id), 'ultracoach.db');
+      const pDb = new Database(pDbPath, { readonly: true });
+      collectFromDb(pDb);
+      pDb.close();
+    } catch { /* ok */ }
   }
 
   const items = Object.values(ingredientMap).sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
-  res.json({ week: from, days_with_menu, total_days: 7, items });
+  res.json({ week: from, items });
 });
 
 module.exports = { router, generateMenuForDate };

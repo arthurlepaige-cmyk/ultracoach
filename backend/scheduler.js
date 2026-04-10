@@ -50,36 +50,7 @@ async function generateWeekMenus(label = 'scheduled') {
 
   console.log(`[scheduler:nutrition] Terminé — ${ok} générés, ${skipped} en cache, ${errors} erreurs`);
 
-  // Auto-push vers GitHub Gist si un token est configuré
-  if (ok > 0) {
-    try {
-      const { getDb } = require('./db');
-      const { pushToGist } = require('./gist');
-      const db = getDb();
-      const settings = db.prepare('SELECT * FROM nutrition_settings WHERE id = 1').get();
-      if (settings?.gist_token) {
-        const weekMenus = {};
-        for (const date of dates) {
-          const cached = db.prepare('SELECT * FROM nutrition_menus WHERE date = ?').get(date);
-          if (cached?.menu_json) {
-            weekMenus[date] = {
-              session_summary: cached.session_summary,
-              needs: JSON.parse(cached.needs_json),
-              menu: JSON.parse(cached.menu_json),
-            };
-          }
-        }
-        const { computeBMR } = require('./calc');
-        const bmr = computeBMR(settings.weight_kg, settings.height_cm, settings.age, settings.sex);
-        const content = { generated_at: new Date().toISOString(), week: mondayStr, author_bmr: bmr, menus: weekMenus };
-        const result = await pushToGist(settings.gist_token, settings.gist_id, content);
-        db.prepare('UPDATE nutrition_settings SET gist_id=?, gist_last_push=CURRENT_TIMESTAMP WHERE id=1').run(result.gist_id);
-        console.log(`[scheduler:gist] Menus poussés → ${result.url}`);
-      }
-    } catch (e) {
-      console.error(`[scheduler:gist] Erreur push: ${e.message}`);
-    }
-  }
+  // Les recettes sont maintenant partagées directement via le serveur commun (plus de Gist)
   console.log();
 }
 
