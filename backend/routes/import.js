@@ -5,18 +5,23 @@ const path = require('path');
 const { Ollama } = require('ollama');
 const Anthropic = require('@anthropic-ai/sdk');
 
-const DATA_PATH = path.join(__dirname, '..', '..', 'data', 'athlete_data_export.json');
 const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'mistral';
-const ollama = new Ollama({ host: OLLAMA_HOST });
+
+function getDataPath() {
+  const { getUserDataDir } = require('../db');
+  const { getUserId } = require('../userContext');
+  return path.join(getUserDataDir(getUserId()), 'athlete_data_export.json');
+}
 
 // ── GET /api/import/status — vérifie si des données existent ─────────────────
 router.get('/status', (req, res) => {
-  const exists = fs.existsSync(DATA_PATH);
+  const dataPath = getDataPath();
+  const exists = fs.existsSync(dataPath);
   if (!exists) return res.json({ has_data: false });
 
   try {
-    const raw = fs.readFileSync(DATA_PATH, 'utf8').replace(/\bNaN\b/g, 'null');
+    const raw = fs.readFileSync(dataPath, 'utf8').replace(/\bNaN\b/g, 'null');
     const data = JSON.parse(raw);
     res.json({
       has_data: true,
