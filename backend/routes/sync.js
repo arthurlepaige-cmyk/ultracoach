@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const fs = require('fs');
 const path = require('path');
-const { syncGarmin, initConnection, completeMfa, testConnection, encryptPassword, getGpxDir } = require('../garminSync');
+const { syncGarmin, initConnection, completeMfa, testConnection, encryptPassword, getGpxDir, exportWorkouts } = require('../garminSync');
 const { getDb } = require('../db');
 const { runWithUser } = require('../userContext');
 
@@ -81,6 +81,19 @@ router.post('/garmin/mfa', async (req, res) => {
 router.post('/garmin/run', async (req, res) => {
   try {
     const result = await syncGarmin(req.user.id);
+    if (!result.ok) return res.status(500).json({ error: result.error });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/sync/garmin/export-plan — envoie des séances vers Garmin Connect
+router.post('/garmin/export-plan', async (req, res) => {
+  const { sessions } = req.body;
+  if (!sessions?.length) return res.status(400).json({ error: 'Sessions requises' });
+  try {
+    const result = await exportWorkouts(req.user.id, sessions);
     if (!result.ok) return res.status(500).json({ error: result.error });
     res.json(result);
   } catch (e) {

@@ -105,4 +105,18 @@ async function syncGarmin(userId) {
   });
 }
 
-module.exports = { syncGarmin, initConnection, completeMfa, testConnection, encryptPassword, decryptPassword, getGpxDir };
+async function exportWorkouts(userId, sessions) {
+  const { getUserDataDir } = require('./db');
+  const os = require('os');
+  const tokensPath = getTokensPath(userId);
+  const tmpPath = path.join(os.tmpdir(), `uc_export_${userId}_${Date.now()}.json`);
+  const fs = require('fs');
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(sessions));
+    return await runPython(['export_workouts', tokensPath, tmpPath], 120000);
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch {}
+  }
+}
+
+module.exports = { syncGarmin, initConnection, completeMfa, testConnection, encryptPassword, decryptPassword, getGpxDir, exportWorkouts };

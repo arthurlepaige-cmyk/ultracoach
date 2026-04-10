@@ -158,6 +158,7 @@ export const api = {
   deleteGarminConfig: () => del('/sync/garmin/config'),
   runGarminSync: () => post('/sync/garmin/run', {}),
   getActivityGpx: (date) => get(`/sync/gpx/${date}`),
+  exportPlanToGarmin: (sessions) => post('/sync/garmin/export-plan', { sessions }),
 
   // Import / premier démarrage
   getImportStatus: () => get('/import/status'),

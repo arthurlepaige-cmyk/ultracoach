@@ -392,6 +392,7 @@ function FullPlanModal({ race, onClose }) {
   const [aiError, setAiError] = useState(null)
   const [aiStatus, setAiStatus] = useState(null)
   const [expandedWeek, setExpandedWeek] = useState(null)
+  const [exportStatus, setExportStatus] = useState({}) // weekStart → { loading, ok, count }
   const today = format(new Date(), 'yyyy-MM-dd')
 
   useEffect(() => {
@@ -531,6 +532,42 @@ function FullPlanModal({ race, onClose }) {
                           {week.week_summary && (
                             <p className="text-xs text-gray-400 italic mb-2">{week.week_summary}</p>
                           )}
+                          {/* Bouton export Garmin */}
+                          {week.sessions?.some(s => s.type !== 'Repos') && (() => {
+                            const ws = week.week_start
+                            const es = exportStatus[ws]
+                            return (
+                              <div className="flex items-center justify-end mb-2">
+                                {es?.ok && (
+                                  <span className="text-xs text-brand-green mr-2">✓ {es.count} séance(s) envoyées</span>
+                                )}
+                                {es?.error && (
+                                  <span className="text-xs text-red-400 mr-2">{es.error}</span>
+                                )}
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation()
+                                    const sessions = week.sessions.filter(s => s.type !== 'Repos' && s.type !== 'Récup' && s.type !== 'Renforcement')
+                                    setExportStatus(prev => ({ ...prev, [ws]: { loading: true } }))
+                                    try {
+                                      const r = await api.exportPlanToGarmin(sessions)
+                                      setExportStatus(prev => ({ ...prev, [ws]: { ok: true, count: r.exported } }))
+                                    } catch (err) {
+                                      setExportStatus(prev => ({ ...prev, [ws]: { error: err.message } }))
+                                    }
+                                  }}
+                                  disabled={es?.loading}
+                                  className="flex items-center gap-1 px-2 py-1 rounded-lg bg-dark-600 hover:bg-dark-500 text-xs text-gray-300 transition-colors disabled:opacity-50"
+                                >
+                                  {es?.loading
+                                    ? <span className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin" />
+                                    : <span>⌚</span>
+                                  }
+                                  {es?.loading ? 'Envoi…' : 'Envoyer vers Garmin'}
+                                </button>
+                              </div>
+                            )
+                          })()}
                           {week.sessions?.map((s, si) => {
                             const color = SESSION_COLORS[s.type] || SPORT_COLORS[s.type] || '#4B5563'
                             const isToday = s.date === today

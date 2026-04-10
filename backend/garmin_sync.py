@@ -344,6 +344,103 @@ def cmd_sync(tokens_path, data_path, db_path, gpx_dir, days):
     except Exception as e:
         out({"ok": False, "error": str(e), "trace": traceback.format_exc()})
 
+ZONE_MAP = {
+    'Z1': (1, 1), 'Z1-Z2': (1, 2), 'Z2': (2, 2),
+    'Z2-Z3': (2, 3), 'Z3': (3, 3), 'Z3-Z4': (3, 4),
+    'Z4': (4, 4), 'Z4-Z5': (4, 5), 'Z5': (5, 5),
+}
+
+SKIP_TYPES = {'repos', 'récup', 'renforcement', 'escalier', 'vélo', 'natation'}
+
+def build_garmin_workout(session):
+    """Convert UltraCoach session dict to Garmin workout JSON."""
+    zone_str = (session.get('zone') or 'Z2').upper().replace(' ', '').replace('−', '-')
+    z_min, z_max = ZONE_MAP.get(zone_str, (2, 2))
+
+    dist_m = int((session.get('distance') or 0) * 1000)
+    dur_s  = int((session.get('duration_min') or 0) * 60)
+
+    steps = []
+    order = 1
+    big = dist_m > 5000 or dur_s > 1800
+
+    def step(type_id, type_key, cond_id, cond_key, cond_val, tgt_id, tgt_key, v1, v2):
+        nonlocal order
+        s = {
+            "type": "ExecutableStepDTO",
+            "stepOrder": order,
+            "stepType": {"stepTypeId": type_id, "stepTypeKey": type_key},
+            "endCondition": {"conditionTypeId": cond_id, "conditionTypeKey": cond_key,
+                             "displayOrder": cond_id, "displayable": True},
+            "endConditionValue": cond_val,
+            "targetType": {"workoutTargetTypeId": tgt_id, "workoutTargetTypeKey": tgt_key},
+            "targetValueOne": v1,
+            "targetValueTwo": v2,
+        }
+        order += 1
+        return s
+
+    if big:
+        steps.append(step(1, "warmup",   2, "time",     600,  1, "no.target", None, None))
+
+    if dist_m > 0:
+        steps.append(step(3, "interval", 3, "distance", dist_m, 4, "heart.rate.zone", z_min, z_max))
+    elif dur_s > 0:
+        steps.append(step(3, "interval", 2, "time",     dur_s,  4, "heart.rate.zone", z_min, z_max))
+    else:
+        steps.append(step(3, "interval", 1, "lap.button", None, 4, "heart.rate.zone", z_min, z_max))
+
+    if big:
+        steps.append(step(2, "cooldown", 2, "time",     300,  1, "no.target", None, None))
+
+    name_parts = [session.get('type', 'Séance')]
+    if session.get('distance'): name_parts.append(f"{session['distance']}km")
+    if session.get('zone'):     name_parts.append(session['zone'])
+    name = ' '.join(str(p) for p in name_parts)
+
+    return {
+        "workoutName": name[:50],
+        "description": (session.get('desc') or '')[:255],
+        "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+        "workoutSegments": [{
+            "segmentOrder": 1,
+            "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+            "workoutSteps": steps,
+        }],
+    }
+
+def cmd_export_workouts(tokens_path, sessions_json_path):
+    try:
+        api = load_api(tokens_path)
+        with open(sessions_json_path) as f:
+            sessions = json.load(f)
+
+        results = []
+        for s in sessions:
+            stype = (s.get('type') or '').lower()
+            if stype in SKIP_TYPES:
+                continue
+            if not s.get('date'):
+                continue
+
+            try:
+                wkt = build_garmin_workout(s)
+                resp = api.garth.post("workout-service/workout", json=wkt)
+                workout_id = resp.json().get("workoutId")
+                if not workout_id:
+                    results.append({"date": s["date"], "type": s["type"], "ok": False, "error": "No workoutId returned"})
+                    continue
+                api.garth.post(f"workout-service/schedule/{workout_id}", json={"date": s["date"]})
+                results.append({"date": s["date"], "type": s["type"], "ok": True, "name": wkt["workoutName"]})
+            except Exception as e:
+                results.append({"date": s["date"], "type": s.get("type", "?"), "ok": False, "error": str(e)})
+
+        ok_count = sum(1 for r in results if r["ok"])
+        out({"ok": True, "exported": ok_count, "total": len(results), "results": results})
+
+    except Exception as e:
+        out({"ok": False, "error": str(e)})
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     try:
@@ -355,6 +452,8 @@ if __name__ == "__main__":
             cmd_test(sys.argv[2])
         elif cmd == "sync":
             cmd_sync(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6])
+        elif cmd == "export_workouts":
+            cmd_export_workouts(sys.argv[2], sys.argv[3])
         else:
             out({"ok": False, "error": f"Unknown command: {cmd}"})
     except Exception as e:
