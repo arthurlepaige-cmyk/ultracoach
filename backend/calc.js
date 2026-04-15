@@ -6,7 +6,7 @@ function calculateAEI(distance_km, duration_min, dplus_m, hr_moy) {
   if (!distance_km || !duration_min || !hr_moy || distance_km <= 0 || hr_moy <= 0) return null;
   const allure = duration_min / distance_km; // min/km
   const d_per_km = (dplus_m || 0) / distance_km;
-  const allure_flat_eq = allure - (d_per_km / 100) * 1.0;
+  const allure_flat_eq = allure - (d_per_km / 100) * 2.0;
   const speed_eq = 60 / Math.max(allure_flat_eq, 3);
   const aei = (speed_eq / hr_moy) * 100;
   return Math.round(aei * 100) / 100;
