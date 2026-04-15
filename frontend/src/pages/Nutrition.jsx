@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Utensils, ChevronLeft, ChevronRight, RefreshCw, Settings, Droplets, Flame, Loader2, Leaf, Fish, Beef, Apple, Wheat, AlertTriangle, CheckCircle, ShoppingCart, Download, X } from 'lucide-react'
+import { Utensils, ChevronLeft, ChevronRight, RefreshCw, Settings, Droplets, Flame, Loader2, Leaf, Fish, Beef, Apple, Wheat, AlertTriangle, CheckCircle, ShoppingCart, Download, X, Upload, CloudDownload, Key, Link } from 'lucide-react'
 import { api } from '../api'
 import { format, parseISO, startOfWeek } from 'date-fns'
 import { fr } from 'date-fns/locale'
@@ -127,12 +127,123 @@ function SettingsPanel({ onClose, onSaved }) {
   )
 }
 
+// ── Panneau sync Gist (liste de courses commune) ─────────────────────────────
+function GistSyncPanel({ onClose }) {
+  const [gistSettings, setGistSettings] = useState(null)
+  const [token, setToken] = useState('')
+  const [partnerUrl, setPartnerUrl] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [msg, setMsg] = useState(null)
+  const [pushing, setPushing] = useState(false)
+  const [pulling, setPulling] = useState(false)
+
+  useEffect(() => {
+    api.get('/nutrition/gist/settings').then(d => {
+      setGistSettings(d)
+      setPartnerUrl(d.source_url || '')
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [])
+
+  const saveToken = async () => {
+    if (!token.trim()) return
+    try {
+      await api.put('/nutrition/gist/token', { token: token.trim() })
+      setMsg({ ok: true, text: 'Token sauvegardé' })
+      setToken('')
+      const d = await api.get('/nutrition/gist/settings')
+      setGistSettings(d)
+    } catch (e) { setMsg({ ok: false, text: e.message }) }
+  }
+
+  const pushNow = async () => {
+    setPushing(true); setMsg(null)
+    try {
+      const r = await api.post('/nutrition/gist/push', {})
+      setMsg({ ok: true, text: `✓ ${r.items_count} ingrédients publiés — semaine ${r.week}` })
+      const d = await api.get('/nutrition/gist/settings')
+      setGistSettings(d)
+    } catch (e) { setMsg({ ok: false, text: e.message }) }
+    finally { setPushing(false) }
+  }
+
+  const pullNow = async () => {
+    setPulling(true); setMsg(null)
+    try {
+      const r = await api.post('/nutrition/gist/pull', { url: partnerUrl.trim() || undefined })
+      setMsg({ ok: true, text: `✓ ${r.items_count} ingrédients de ${r.partner} importés (semaine ${r.week})` })
+    } catch (e) { setMsg({ ok: false, text: e.message }) }
+    finally { setPulling(false) }
+  }
+
+  if (loading) return null
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+      <div className="bg-dark-800 border border-dark-500 rounded-xl w-full max-w-sm p-5 space-y-5">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold flex items-center gap-2"><Link size={15} className="text-brand-green" />Liste de courses commune</h3>
+          <button onClick={onClose} className="p-1 hover:bg-dark-600 rounded"><X size={16} /></button>
+        </div>
+
+        {/* Section Arthur — push */}
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-gray-300 flex items-center gap-1.5"><Upload size={12} />Publier mes ingrédients</p>
+          <p className="text-xs text-gray-500">Chaque samedi à 20h, tes ingrédients sont publiés automatiquement sur GitHub Gist si le token est configuré.</p>
+          {!gistSettings?.has_token ? (
+            <div className="space-y-2">
+              <p className="text-xs text-orange-400">Token GitHub manquant — <a href="https://github.com/settings/tokens/new?scopes=gist" target="_blank" rel="noopener noreferrer" className="underline">créer un token ici</a> (scope : gist uniquement)</p>
+              <div className="flex gap-2">
+                <input type="password" value={token} onChange={e => setToken(e.target.value)} placeholder="ghp_xxxxxxxxxxxx" className="input-field flex-1 text-xs" />
+                <button onClick={saveToken} className="btn-primary text-xs px-3 flex items-center gap-1"><Key size={12} />OK</button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-xs text-green-400"><CheckCircle size={12} />Token configuré{gistSettings.last_push && ` — dernier push ${new Date(gistSettings.last_push).toLocaleDateString('fr-FR')}`}</div>
+              {gistSettings.gist_url && (
+                <p className="text-xs text-gray-500 break-all">URL à donner à Camille :<br/><span className="text-blue-400">{gistSettings.source_url || 'Génère d\'abord un push'}</span></p>
+              )}
+              <button onClick={pushNow} disabled={pushing} className="btn-secondary text-xs w-full flex items-center justify-center gap-1.5">
+                {pushing ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                Publier maintenant
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-dark-600" />
+
+        {/* Section Camille — pull */}
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-gray-300 flex items-center gap-1.5"><CloudDownload size={12} />Importer les ingrédients du partenaire</p>
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">URL du Gist partenaire</label>
+            <input type="url" value={partnerUrl} onChange={e => setPartnerUrl(e.target.value)} placeholder="https://gist.github.com/raw/..." className="input-field w-full text-xs" />
+          </div>
+          <button onClick={pullNow} disabled={pulling || !partnerUrl.trim()} className="btn-secondary text-xs w-full flex items-center justify-center gap-1.5">
+            {pulling ? <Loader2 size={12} className="animate-spin" /> : <CloudDownload size={12} />}
+            Importer maintenant
+          </button>
+          {gistSettings?.last_pull && <p className="text-xs text-gray-500">Dernier import : {new Date(gistSettings.last_pull).toLocaleDateString('fr-FR')}</p>}
+        </div>
+
+        {msg && (
+          <p className={`text-xs rounded-lg px-3 py-2 ${msg.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>{msg.text}</p>
+        )}
+      </div>
+    </motion.div>
+  )
+}
+
 function ShoppingList({ weekStart }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [checked, setChecked] = useState({})
   const [pulling, setPulling] = useState(false)
   const [pullStatus, setPullStatus] = useState(null)
+  const [showGist, setShowGist] = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -178,10 +289,17 @@ function ShoppingList({ weekStart }) {
 
   return (
     <div className="space-y-3">
+      <AnimatePresence>{showGist && <GistSyncPanel onClose={() => { setShowGist(false); load() }} />}</AnimatePresence>
       {/* Header */}
       <div className="flex items-center justify-between">
         <p className="text-xs text-gray-400">{data.days_with_menu}/{data.total_days} jours · {data.items.length} ingrédients</p>
         <div className="flex gap-2">
+          <button onClick={() => setShowGist(true)}
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 transition-colors text-gray-300"
+            title="Sync liste de courses commune">
+            <Link size={12} />
+            <span className="hidden sm:inline">Foyer</span>
+          </button>
           <button onClick={handleSync} disabled={pulling}
             className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-dark-700 hover:bg-dark-600 transition-colors disabled:opacity-50 text-gray-300"
             title="Synchroniser les recettes depuis le compte source">

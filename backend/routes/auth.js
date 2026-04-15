@@ -165,4 +165,51 @@ router.get('/users', requireAuth, (req, res) => {
   res.json(users);
 });
 
+// ── POST /api/auth/link-partner — lier un compte partenaire (foyer) ───────────
+// Corps : { partner_email: "camille@..." }
+// Le partenaire voit les menus de l'utilisateur courant dans sa liste de courses
+router.post('/link-partner', requireAuth, (req, res) => {
+  const { partner_email } = req.body;
+  if (!partner_email) return res.status(400).json({ error: 'partner_email requis' });
+
+  const authDb = getAuthDb();
+  const partner = authDb.prepare('SELECT id, name, email FROM users WHERE email = ?')
+    .get(partner_email.toLowerCase().trim());
+  if (!partner) return res.status(404).json({ error: 'Aucun compte trouvé avec cet email' });
+  if (partner.id === req.user.id) return res.status(400).json({ error: 'Vous ne pouvez pas vous lier à vous-même' });
+
+  // Le partenaire prend l'utilisateur courant comme source (il verra les menus de l'utilisateur courant)
+  authDb.prepare('UPDATE users SET source_user_id = ? WHERE id = ?').run(req.user.id, partner.id);
+
+  res.json({ ok: true, partner: { name: partner.name, email: partner.email } });
+});
+
+// ── DELETE /api/auth/link-partner — délier le compte partenaire ───────────────
+router.delete('/link-partner', requireAuth, (req, res) => {
+  const authDb = getAuthDb();
+  // Délier le partenaire qui pointe vers moi
+  authDb.prepare('UPDATE users SET source_user_id = NULL WHERE source_user_id = ?').run(req.user.id);
+  // Délier moi-même si je pointe vers quelqu'un
+  authDb.prepare('UPDATE users SET source_user_id = NULL WHERE id = ?').run(req.user.id);
+  res.json({ ok: true });
+});
+
+// ── GET /api/auth/partner — infos partenaire lié ─────────────────────────────
+router.get('/partner', requireAuth, (req, res) => {
+  const authDb = getAuthDb();
+  const me = authDb.prepare('SELECT source_user_id FROM users WHERE id = ?').get(req.user.id);
+
+  // Je suis le "follower" (j'ai un source_user_id)
+  if (me?.source_user_id) {
+    const source = authDb.prepare('SELECT id, name, email FROM users WHERE id = ?').get(me.source_user_id);
+    if (source) return res.json({ linked: true, partner: { name: source.name, email: source.email }, role: 'follower' });
+  }
+
+  // Je suis la "source" (quelqu'un pointe vers moi)
+  const follower = authDb.prepare('SELECT id, name, email FROM users WHERE source_user_id = ?').get(req.user.id);
+  if (follower) return res.json({ linked: true, partner: { name: follower.name, email: follower.email }, role: 'source' });
+
+  res.json({ linked: false });
+});
+
 module.exports = router;

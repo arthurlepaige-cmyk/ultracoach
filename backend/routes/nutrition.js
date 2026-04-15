@@ -518,8 +518,183 @@ router.get('/shopping-list', (req, res) => {
     } catch { /* ok */ }
   }
 
+  // 4. Ingrédients partenaires depuis Gist (instances séparées — Camille sur son propre ordi)
+  try {
+    const myDb2 = getDb();
+    myDb2.exec(`CREATE TABLE IF NOT EXISTS partner_ingredients (
+      week TEXT PRIMARY KEY, user_name TEXT, items_json TEXT, pulled_at TEXT
+    )`);
+    const partnerRow = myDb2.prepare('SELECT * FROM partner_ingredients ORDER BY week DESC LIMIT 1').get();
+    if (partnerRow?.items_json) {
+      const partnerItems = JSON.parse(partnerRow.items_json);
+      for (const item of partnerItems) {
+        if (!item?.nom) continue;
+        const key = item.nom.toLowerCase().trim();
+        if (!ingredientMap[key]) ingredientMap[key] = { nom: item.nom, occurrences: [] };
+        for (const occ of (item.occurrences || [])) {
+          ingredientMap[key].occurrences.push({ ...occ, partner: partnerRow.user_name });
+        }
+      }
+    }
+  } catch { /* ok */ }
+
   const items = Object.values(ingredientMap).sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
-  res.json({ week: from, items });
+  const days_with_menu = dates.filter(d => getDb().prepare('SELECT date FROM nutrition_menus WHERE date = ?').get(d)).length;
+  res.json({ week: from, items, days_with_menu, total_days: 7 });
 });
 
-module.exports = { router, generateMenuForDate };
+// ── Helpers Gist ─────────────────────────────────────────────────────────────
+async function buildWeekIngredients(db, from) {
+  const dates = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(from); d.setDate(d.getDate() + i);
+    return d.toISOString().slice(0, 10);
+  });
+  const DAY_LABELS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+  const map = {};
+  for (let i = 0; i < dates.length; i++) {
+    const row = db.prepare('SELECT menu_json FROM nutrition_menus WHERE date = ?').get(dates[i]);
+    if (!row?.menu_json) continue;
+    let menu; try { menu = JSON.parse(row.menu_json); } catch { continue; }
+    const d = DAY_LABELS[i];
+    const addIng = (ings, meal) => {
+      if (!Array.isArray(ings)) return;
+      for (const ing of ings) {
+        if (!ing?.nom) continue;
+        const key = ing.nom.toLowerCase().trim();
+        if (!map[key]) map[key] = { nom: ing.nom, occurrences: [] };
+        map[key].occurrences.push({ quantite: ing.quantite || '', meal, day: d });
+      }
+    };
+    addIng(menu.petit_dejeuner?.ingredients, 'Matin');
+    addIng(menu.dejeuner?.option_pain_fromage?.ingredients, 'Midi');
+    addIng(menu.diner?.ingredients, 'Soir');
+  }
+  return Object.values(map).sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
+}
+
+// ── POST /api/nutrition/gist/push — push les ingrédients de la semaine sur Gist
+router.post('/gist/push', async (req, res) => {
+  const https = require('https');
+  const db = getDb();
+  const settings = db.prepare('SELECT * FROM nutrition_settings WHERE id = 1').get() || {};
+  if (!settings.gist_token) return res.status(400).json({ error: 'Token GitHub manquant — configure-le dans les paramètres nutrition' });
+
+  const from = req.body.from || (() => {
+    const d = new Date(); const day = d.getDay();
+    const daysToNextMonday = day === 0 ? 1 : 8 - day;
+    d.setDate(d.getDate() + daysToNextMonday);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  const items = await buildWeekIngredients(db, from);
+  if (!items.length) return res.status(400).json({ error: 'Aucun menu généré pour cette semaine — génère d\'abord les menus' });
+
+  const authDb = require('../db').getAuthDb();
+  const { getUserId } = require('../userContext');
+  const userRow = authDb.prepare('SELECT name FROM users WHERE id = ?').get(getUserId());
+  const content = JSON.stringify({ week: from, user: userRow?.name || 'Arthur', generated_at: new Date().toISOString(), items }, null, 2);
+
+  // Créer ou mettre à jour le Gist
+  const payload = JSON.stringify({
+    description: `UltraCoach — liste courses semaine ${from}`,
+    public: false,
+    files: { 'ultracoach_liste_courses.json': { content } },
+  });
+
+  const method = settings.gist_id ? 'PATCH' : 'POST';
+  const path = settings.gist_id ? `/gists/${settings.gist_id}` : '/gists';
+
+  const gistData = await new Promise((resolve, reject) => {
+    const options = {
+      hostname: 'api.github.com',
+      path, method,
+      headers: { 'Authorization': `token ${settings.gist_token}`, 'User-Agent': 'UltraCoach', 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+    };
+    const req2 = https.request(options, r => {
+      let body = '';
+      r.on('data', c => body += c);
+      r.on('end', () => { try { resolve(JSON.parse(body)); } catch { reject(new Error('Réponse GitHub invalide')); } });
+    });
+    req2.on('error', reject);
+    req2.write(payload);
+    req2.end();
+  });
+
+  if (gistData.id) {
+    const rawUrl = gistData.files?.['ultracoach_liste_courses.json']?.raw_url || '';
+    const baseRawUrl = rawUrl.replace(/\/raw\/[^/]+\//, '/raw/');
+    db.prepare('UPDATE nutrition_settings SET gist_id = ?, gist_source_url = ?, gist_last_push = CURRENT_TIMESTAMP WHERE id = 1')
+      .run(gistData.id, baseRawUrl, null);
+    res.json({ ok: true, gist_id: gistData.id, raw_url: baseRawUrl, items_count: items.length, week: from });
+  } else {
+    res.status(500).json({ error: gistData.message || 'Erreur GitHub', detail: gistData });
+  }
+});
+
+// ── POST /api/nutrition/gist/pull — tire les ingrédients du Gist partenaire ──
+router.post('/gist/pull', async (req, res) => {
+  const https = require('https');
+  const db = getDb();
+  const settings = db.prepare('SELECT * FROM nutrition_settings WHERE id = 1').get() || {};
+  const url = req.body.url || settings.gist_source_url;
+  if (!url) return res.status(400).json({ error: 'URL du Gist partenaire manquante' });
+
+  // Sauvegarde l'URL si fournie dans le body
+  if (req.body.url && req.body.url !== settings.gist_source_url) {
+    db.prepare('UPDATE nutrition_settings SET gist_source_url = ? WHERE id = 1').run(req.body.url);
+  }
+
+  const gistData = await new Promise((resolve, reject) => {
+    const urlObj = new URL(url);
+    const options = { hostname: urlObj.hostname, path: urlObj.pathname + urlObj.search, method: 'GET', headers: { 'User-Agent': 'UltraCoach' } };
+    const req2 = https.request(options, r => {
+      let body = '';
+      r.on('data', c => body += c);
+      r.on('end', () => { try { resolve(JSON.parse(body)); } catch { reject(new Error('JSON invalide depuis le Gist')); } });
+    });
+    req2.on('error', reject);
+    req2.end();
+  });
+
+  if (!gistData.items?.length) return res.status(400).json({ error: 'Gist vide ou format invalide' });
+
+  // Stocker dans nutrition_settings en tant que JSON partenaire
+  db.prepare('UPDATE nutrition_settings SET gist_last_pull = CURRENT_TIMESTAMP WHERE id = 1').run();
+
+  // Stocker les ingrédients partenaires dans une table dédiée (si absente → migration)
+  db.exec(`CREATE TABLE IF NOT EXISTS partner_ingredients (
+    week TEXT PRIMARY KEY,
+    user_name TEXT,
+    items_json TEXT,
+    pulled_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.prepare('INSERT OR REPLACE INTO partner_ingredients (week, user_name, items_json, pulled_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)')
+    .run(gistData.week, gistData.user, JSON.stringify(gistData.items));
+
+  res.json({ ok: true, week: gistData.week, partner: gistData.user, items_count: gistData.items.length });
+});
+
+// ── GET /api/nutrition/gist/settings — infos Gist configurés ─────────────────
+router.get('/gist/settings', (req, res) => {
+  const db = getDb();
+  const s = db.prepare('SELECT gist_token, gist_id, gist_source_url, gist_last_push, gist_last_pull FROM nutrition_settings WHERE id = 1').get() || {};
+  res.json({
+    has_token: !!s.gist_token,
+    gist_id: s.gist_id,
+    gist_url: s.gist_id ? `https://gist.github.com/${s.gist_id}` : null,
+    source_url: s.gist_source_url,
+    last_push: s.gist_last_push,
+    last_pull: s.gist_last_pull,
+  });
+});
+
+// ── PUT /api/nutrition/gist/token — enregistre le token GitHub ───────────────
+router.put('/gist/token', (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ error: 'token requis' });
+  const db = getDb();
+  db.prepare('UPDATE nutrition_settings SET gist_token = ? WHERE id = 1').run(token);
+  res.json({ ok: true });
+});
+
+module.exports = { router, generateMenuForDate, buildWeekIngredients };

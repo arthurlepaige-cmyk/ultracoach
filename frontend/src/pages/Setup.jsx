@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { User, Upload, Cpu, CheckCircle, AlertTriangle, ChevronRight, ChevronLeft, Mountain, FileText, Loader2, RefreshCw, Wifi, WifiOff, Trash2 } from 'lucide-react'
+import { User, Upload, Cpu, CheckCircle, AlertTriangle, ChevronRight, ChevronLeft, Mountain, FileText, Loader2, RefreshCw, Wifi, WifiOff, Trash2, Heart, Unlink } from 'lucide-react'
 import { api } from '../api'
 
 const STEPS = ['Profil', 'Données', 'Conversion', 'Terminé']
@@ -257,6 +257,123 @@ function SyncTab({ onClose }) {
   )
 }
 
+// ── Composant Foyer ─────────────────────────────────────────────────────────
+function FoyerTab() {
+  const [status, setStatus] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [email, setEmail] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState(null)
+
+  const load = () => {
+    setLoading(true)
+    api.getPartner().then(d => { setStatus(d); setLoading(false) }).catch(() => setLoading(false))
+  }
+
+  useEffect(() => { load() }, [])
+
+  const handleLink = async () => {
+    if (!email.trim()) return
+    setSaving(true)
+    setMsg(null)
+    try {
+      const r = await api.linkPartner(email.trim())
+      setMsg({ ok: true, text: `Compte lié avec ${r.partner.name} — la liste de courses est maintenant partagée !` })
+      load()
+    } catch (e) {
+      setMsg({ ok: false, text: e.message })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleUnlink = async () => {
+    setSaving(true)
+    setMsg(null)
+    try {
+      await api.unlinkPartner()
+      setMsg({ ok: true, text: 'Liaison supprimée.' })
+      load()
+    } catch (e) {
+      setMsg({ ok: false, text: e.message })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading) return <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin text-gray-400" /></div>
+
+  return (
+    <div className="space-y-4">
+      <div className="card space-y-3">
+        <div className="flex items-center gap-2 mb-1">
+          <Heart size={16} className="text-brand-green" />
+          <h3 className="font-semibold text-sm">Liste de courses commune</h3>
+        </div>
+        <p className="text-xs text-gray-400 leading-relaxed">
+          En liant deux comptes, la liste de courses de la page Nutrition combine automatiquement
+          les menus des deux athlètes. Chaque personne garde son historique et son plan d'entraînement indépendants.
+        </p>
+
+        {status?.linked ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 bg-dark-700 rounded-xl p-3">
+              <CheckCircle size={16} className="text-brand-green flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium">{status.partner.name}</p>
+                <p className="text-xs text-gray-400">{status.partner.email}</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {status.role === 'source' ? 'Vos menus sont partagés avec ce compte' : 'Vous voyez les menus de ce compte'}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleUnlink}
+              disabled={saving}
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-red-500/30 text-red-400 text-sm hover:bg-red-500/10 transition-colors"
+            >
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Unlink size={14} />}
+              Supprimer la liaison
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs text-gray-400 mb-1 block">Email du compte à lier</label>
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="camille@exemple.com"
+                className="input w-full text-sm"
+                onKeyDown={e => e.key === 'Enter' && handleLink()}
+              />
+            </div>
+            <p className="text-xs text-gray-500">
+              L'autre personne doit d'abord créer son compte UltraCoach sur cette application.
+              Une fois lié, sa liste de courses inclura vos menus.
+            </p>
+            <button
+              onClick={handleLink}
+              disabled={saving || !email.trim()}
+              className="btn-primary w-full text-sm py-2.5 flex items-center justify-center gap-2"
+            >
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <Heart size={14} />}
+              Lier les comptes
+            </button>
+          </div>
+        )}
+
+        {msg && (
+          <p className={`text-xs rounded-lg px-3 py-2 ${msg.ok ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+            {msg.text}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function Setup({ onComplete }) {
   const [tab, setTab] = useState('import')  // 'import' | 'sync'
   const [step, setStep] = useState(0)
@@ -348,9 +465,16 @@ export default function Setup({ onComplete }) {
           >
             Sync automatique
           </button>
+          <button
+            onClick={() => setTab('foyer')}
+            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'foyer' ? 'bg-dark-600 text-white' : 'text-gray-400 hover:text-white'}`}
+          >
+            Foyer
+          </button>
         </div>
 
         {tab === 'sync' && <SyncTab onClose={onComplete} />}
+        {tab === 'foyer' && <FoyerTab />}
 
         {tab === 'import' && <>
         {/* Step indicator */}

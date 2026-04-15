@@ -47,6 +47,11 @@ function getAuthDb() {
         last_login TEXT
       );
     `);
+    // Migration : colonne source_user_id (liaison partenaire foyer)
+    const userCols = authDb.prepare('PRAGMA table_info(users)').all().map(c => c.name);
+    if (!userCols.includes('source_user_id')) {
+      authDb.exec('ALTER TABLE users ADD COLUMN source_user_id TEXT');
+    }
   }
   return authDb;
 }

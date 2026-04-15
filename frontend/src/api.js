@@ -175,4 +175,12 @@ export const api = {
   changePassword: (current_password, new_password) => put('/auth/password', { current_password, new_password }),
   deleteAccount: (password) => del('/auth/account', { password }),
   exportData: () => window.open('/api/auth/export', '_blank'),
+
+  // Liaison partenaire (foyer — liste de courses commune)
+  getPartner: () => get('/auth/partner'),
+  linkPartner: (partner_email) => post('/auth/link-partner', { partner_email }),
+  unlinkPartner: () => del('/auth/link-partner'),
+
+  // Accès bruts pour les composants avancés
+  get, post, put,
 }
