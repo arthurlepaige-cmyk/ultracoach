@@ -110,8 +110,8 @@ daily_briefing -- Cache briefing IA (date PK, text, generated_at)
 
 ## Déploiement — Oracle Cloud
 
-- **Serveur** : `ubuntu@130.61.178.50`
-- **Clé SSH** : `~/Downloads/ssh-key-2026-04-10-3.key`
+- **Serveur** : `ubuntu@<SERVER_IP>` — voir notes locales
+- **Clé SSH** : `~/Downloads/<SSH_KEY>.key` — voir notes locales
 - **Repo GitHub** : `https://github.com/arthurlepaige-cmyk/ultracoach.git`
 
 ```bash
@@ -119,6 +119,6 @@ daily_briefing -- Cache briefing IA (date PK, text, generated_at)
 git add <fichiers> && git commit -m "..." && git push origin main
 
 # 2. Déployer sur le serveur (une seule commande)
-ssh -i ~/Downloads/ssh-key-2026-04-10-3.key ubuntu@130.61.178.50 \
+ssh -i ~/Downloads/<SSH_KEY>.key ubuntu@<SERVER_IP> \
   "cd ~/UltraCoach && git pull && cd frontend && npm install && npm run build && cd .. && pm2 restart ultracoach && pm2 status"
 ```
