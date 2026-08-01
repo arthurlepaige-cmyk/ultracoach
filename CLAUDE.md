@@ -68,12 +68,15 @@ ultra-coach/
 ### Calcul AEI
 - Utilise `D_plus_exact` (D+ corrigé tapis), **pas** `D_plus` (D+ brut Strava)
 - AEI rolling = moyenne des 10 dernières sorties outdoor > 7km avec FC
-- `> 8.3` = pic de forme (vert), `7.5-8.3` = bonne forme (bleu), `< 7.5` = fatigue (orange)
+- `> 9.0` = pic de forme (vert), `8.0-9.0` = bonne forme (bleu), `< 8.0` = fatigue (orange)
+- Seuils calibrés sur données perso : médiane 7.78, runs navette ~8.8-9.3, longs ~7.5-8.2
 
 ### Tapis incliné
-- `is_treadmill: true` → D+ enregistré = 0 → correction automatique :
-  - 2025 et avant : **290m**
-  - 2026 et après : **400m**
+- `is_treadmill: true` → D+ enregistré = 0 → correction automatique **basée sur la durée** (protocole fixe, pente 7,5%) :
+  - Séance **30 min** courue à 8 km/h → 4 km → **300m**
+  - Séance **1 h** courue à 7 km/h → 7 km → **525m**
+  - Règle : 8 km/h si ≤45 min, sinon 7 km/h ; `D+ = distance_m × 0,075`
+  - `calc.js correctTreadmillDplus(recorded_dplus, duration_min)`, branché dans `daily-log.js`
 
 ### Alerte FC repos
 - `< 53` → Vert (OK)

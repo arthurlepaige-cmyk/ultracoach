@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getDb } = require('../db');
-const { calculateAEI, getAEIStatus, checkSweetSpot } = require('../calc');
+const { calculateAEI, getAEIStatus, checkSweetSpot, correctTreadmillDplus } = require('../calc');
 const { loadData } = require('../dataLoader');
 
 // Sports for which AEI applies
@@ -66,6 +66,10 @@ router.post('/', (req, res) => {
   let effective_dplus = dplus_m;
   if (sport === 'Escalier' && nb_marches && !dplus_m) {
     effective_dplus = Math.round(nb_marches * STAIR_HEIGHT_M);
+  }
+  // Tapis: D+ enregistré = 0 → correction basée sur la durée (protocole 7,5%)
+  if (isTreadmill && !dplus_m && duration_min) {
+    effective_dplus = correctTreadmillDplus(0, duration_min);
   }
 
   const dplus_corrected = effective_dplus || null;

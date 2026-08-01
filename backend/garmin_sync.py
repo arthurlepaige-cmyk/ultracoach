@@ -23,6 +23,15 @@ def load_api(tokens_path):
     api = Garmin()
     with open(tokens_path, 'r') as f:
         api.client.loads(f.read())
+    # display_name n'est pas restauré depuis les tokens → sans lui, les endpoints
+    # basés sur l'URL (get_heart_rates, get_rhr_day, get_stats) renvoient 403.
+    if not getattr(api, "display_name", None):
+        try:
+            sp = api.client.connectapi("/userprofile-service/socialProfile")
+            api.display_name = sp.get("displayName")
+            api.full_name = sp.get("fullName")
+        except Exception:
+            pass
     return api
 
 def save_tokens(api, tokens_path):
@@ -196,6 +205,13 @@ def cmd_sync(tokens_path, data_path, db_path, gpx_dir, days):
                     "tapis" in (act.get("activityName") or "").lower() or \
                     "treadmill" in (act.get("activityName") or "").lower()
 
+                # Tapis : Garmin renvoie elevationGain=0. Correction protocole pente 7,5% :
+                # 8 km/h si séance ≤45min, sinon 7 km/h ; D+ = distance × 0,075.
+                if is_treadmill and (not dplus) and time_h > 0:
+                    dur_min = time_h * 60
+                    speed_kmh = 8 if dur_min <= 45 else 7
+                    dplus = round(speed_kmh * (dur_min / 60) * 1000 * 0.075)
+
                 key = f"{date_str[:10]}_{dist_km}"
                 if act_id and act_id in existing_ids:
                     # Activité existante — vérifie si GPX manque
@@ -282,7 +298,7 @@ def cmd_sync(tokens_path, data_path, db_path, gpx_dir, days):
             # HRV
             try:
                 hrv_data = api.get_hrv_data(ds)
-                v = (hrv_data.get("hrvSummary") or {}).get("lastNight")
+                v = (hrv_data.get("hrvSummary") or {}).get("lastNightAvg")
                 if v: hrv = round(v)
             except: pass
 

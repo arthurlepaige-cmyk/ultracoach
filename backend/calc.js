@@ -14,17 +14,22 @@ function calculateAEI(distance_km, duration_min, dplus_m, hr_moy) {
 
 function getAEIStatus(aei) {
   if (!aei) return { label: 'N/A', color: 'gray' };
-  if (aei >= 8.3) return { label: 'Pic de forme', color: 'green' };
-  if (aei >= 7.5) return { label: 'Bonne forme', color: 'blue' };
+  if (aei >= 9.0) return { label: 'Pic de forme', color: 'green' };
+  if (aei >= 8.0) return { label: 'Bonne forme', color: 'blue' };
   return { label: 'Fatigue', color: 'orange' };
 }
 
-function correctTreadmillDplus(recorded_dplus, year) {
-  // D+ recorded on treadmill is 0, return estimated correction
-  if (!recorded_dplus || recorded_dplus === 0) {
-    return year <= 2025 ? 290 : 400;
-  }
-  return recorded_dplus;
+// Protocole tapis fixe de l'athlète : pente moyenne 7,5%.
+//   séance courte (~30min) courue à 8 km/h → 4 km → 300 m D+
+//   séance longue (~1h)    courue à 7 km/h → 7 km → 525 m D+
+const TREADMILL_SLOPE = 0.075;
+function correctTreadmillDplus(recorded_dplus, duration_min) {
+  // D+ enregistré sur tapis = 0 → estimer depuis la durée réelle.
+  if (recorded_dplus && recorded_dplus > 0) return recorded_dplus;
+  if (!duration_min || duration_min <= 0) return null;
+  const speed_kmh = duration_min <= 45 ? 8 : 7;
+  const distance_m = speed_kmh * (duration_min / 60) * 1000;
+  return Math.round(distance_m * TREADMILL_SLOPE);
 }
 
 function estimateRaceTime(distance_km, dplus_m) {
