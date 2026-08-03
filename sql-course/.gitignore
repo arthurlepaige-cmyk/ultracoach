@@ -1,0 +1,5 @@
+node_modules/
+dist/
+
+# Base d'entraînement générée (binaire) — se régénère avec `npm run gen-db`
+public/training.sqlite
